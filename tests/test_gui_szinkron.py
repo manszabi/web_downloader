@@ -74,6 +74,8 @@ check("megnyílt a fájlkezelő a beállítások mappájával",
       opened and opened[-1][1] == SETTINGS.parent, str(opened))
 check("a beállításfájl olvasható JSON", "url" in letolto.json.loads(
     SETTINGS.read_text(encoding="utf-8")))
+check("a mentés után nem marad ideiglenes fájl",
+      not SETTINGS.with_suffix(".tmp").exists())
 
 errors = []
 from tkinter import messagebox as tk_messagebox     # a GUI ugyanezt a modult használja

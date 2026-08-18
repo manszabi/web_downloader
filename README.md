@@ -77,6 +77,7 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
 | `letolto.py` | maga a program (GUI + parancssor) |
 | `inditas.bat` | Windows-indító, függőség-ellenőrzéssel |
 | `HASZNALAT.md` | rövid használati útmutató |
+| `ruff.toml` | a lint rögzített beállításai (a program futtatásához nem kell) |
 | `tests/` | tesztek és a hozzájuk tartozó helyi kiszolgáló (a futtatáshoz nem kellenek) |
 | `tests/TESZTJEGYZOKONYV.md` | a fejlesztés során talált hibák, mérések, ismert korlátok |
 
@@ -93,7 +94,7 @@ python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py
 ```
 
-Jelenlegi állás: **294 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **302 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---

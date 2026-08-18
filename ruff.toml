@@ -1,0 +1,11 @@
+# A program ellenőrzésének rögzített beállításai, hogy a "ruff check" mindig
+# ugyanazt jelentse - kapcsolók nélkül is.
+target-version = "py311"      # a program alsó határa (StrEnum, match-case)
+line-length = 100
+
+# A tesztek szándékosan lazább, egyfájlos szkriptek (import a fájl közepén,
+# nyers számok, tömör sorok), ezért nem a program szabályai szerint mérjük őket.
+extend-exclude = ["tests"]
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "C4", "RUF", "PL"]

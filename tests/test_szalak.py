@@ -138,6 +138,7 @@ import letolto
 cap = {}
 ml = tk.Tk.mainloop
 tk.Tk.mainloop = lambda s: cap.setdefault("a", s)
+testsrv.temp_settings(letolto, "szalak")
 letolto.run_gui()
 app = cap["a"]
 tk.Tk.mainloop = ml

@@ -10,6 +10,7 @@ import os
 import string
 import subprocess
 import sys
+import time
 import tempfile
 from pathlib import Path, PureWindowsPath
 
@@ -275,7 +276,21 @@ launched = []
 real_popen = subprocess.Popen
 opened_dirs = []
 real_open = letolto.open_in_file_manager
-subprocess.Popen = lambda *a, **k: launched.append((a, k))
+
+
+class FakeProc:
+    """A spawn_detached poll()-t hiv a korabbi folyamatokra."""
+
+    def poll(self):
+        return 0
+
+
+def fake_popen(*a, **k):
+    launched.append((a, k))
+    return FakeProc()
+
+
+subprocess.Popen = fake_popen
 letolto.open_in_file_manager = lambda path: opened_dirs.append(Path(path))
 try:
     letolto.sys.platform = "win32"
@@ -285,12 +300,37 @@ finally:
     letolto.sys.platform = real_platform
     subprocess.Popen = real_popen
     letolto.open_in_file_manager = real_open
+    letolto._spawned.clear()
 check("meglévő fájlnál elindítja az Intézőt", len(launched) == 1, str(launched))
 check("egyetlen sztringként adja át (a lista alak elrontaná az idézőjeleket)",
       launched and isinstance(launched[0][0][0], str), str(launched[:1]))
 check("shell nélkül indul", launched and not launched[0][1].get("shell"), str(launched[:1]))
 check("hiányzó fájlnál a mappát nyitja meg",
       opened_dirs == [TMP], str(opened_dirs))
+
+# ------------------------------------------------- 8/c. kulso program inditasa
+print("\n--- 8/c. Külső program indítása (nem marad zombi, nincs kimeneti zaj) ---")
+check("elnyeli a külső program kimenetét",
+      "stdout=subprocess.DEVNULL" in src_txt and "stderr=subprocess.DEVNULL" in src_txt)
+check("saját munkamenetben indul (a Ctrl+C nem üti le)",
+      "start_new_session=True" in src_txt)
+letolto.spawn_detached([sys.executable, "-c", ""])
+first = letolto._spawned[-1]
+time.sleep(0.8)                               # ennyi alatt biztosan befejeződik
+letolto.spawn_detached([sys.executable, "-c", ""])
+check("a befejezett folyamatot begyűjti (nem marad zombi)",
+      first.returncode is not None and first not in letolto._spawned,
+      f"returncode={first.returncode}, nyilvántartva={len(letolto._spawned)}")
+check("csak a még futók maradnak nyilvántartva", len(letolto._spawned) <= 1,
+      str(len(letolto._spawned)))
+letolto._spawned[-1].wait(timeout=10)
+letolto._spawned.clear()
+
+# ------------------------------------------------- 8/d. beallitasok mentese
+print("\n--- 8/d. A beállításfájl mentése atomi ---")
+check("ideiglenes fájlba ír, és csak utána cserél", "atomic_replace(tmp, SETTINGS_FILE)" in src_txt)
+check("az atomi csere Windowson újrapróbálkozik", "def atomic_replace" in src_txt
+      and "PermissionError" in src_txt)
 
 # --------------------------------------------------------------- 9. bat fajl
 print("\n--- 9. Az indito .bat ellenőrzése ---")

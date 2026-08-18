@@ -30,6 +30,7 @@ import tkinter as tk
 captured = {}
 orig_mainloop = tk.Tk.mainloop
 tk.Tk.mainloop = lambda self: captured.setdefault("app", self)   # nem indit vegtelen ciklust
+testsrv.temp_settings(letolto, "gui")      # sajat beallitasfajl, ne szivarogjon at semmi
 letolto.run_gui()
 app = captured["app"]
 tk.Tk.mainloop = orig_mainloop

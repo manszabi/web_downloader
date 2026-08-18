@@ -28,6 +28,7 @@ import tkinter as tk
 cap = {}
 orig = tk.Tk.mainloop
 tk.Tk.mainloop = lambda self: cap.setdefault("app", self)
+testsrv.temp_settings(letolto, "gui_valogatas")
 letolto.run_gui()
 app = cap["app"]
 tk.Tk.mainloop = orig

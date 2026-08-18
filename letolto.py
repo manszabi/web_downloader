@@ -288,15 +288,32 @@ def fit_path(outdir: Path, rel: Path, limit: int = MAX_ABS_PATH) -> Path:
     return Path(f"{_short_hash(rel.as_posix())}{ext}")     # végső esetben csak a jel
 
 
+_spawned: list[subprocess.Popen[bytes]] = []
+
+
+def spawn_detached(command: str | list[str]) -> None:
+    """Külső program indítása úgy, hogy a felület ne várjon rá.
+
+    A korábban indítottak közül a már befejezetteket begyűjtjük: enélkül
+    POSIX-on minden egyes megnyitás után zombi folyamat maradna a program
+    végéig. A saját munkamenet és az elnyelt kimenet azt szolgálja, hogy a
+    fájlkezelő ne írjon a konzolunkra, és ne kapja meg a mi Ctrl+C-nket.
+    """
+    _spawned[:] = [proc for proc in _spawned if proc.poll() is None]
+    _spawned.append(subprocess.Popen(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True))        # Windowson a subprocess figyelmen kívül hagyja
+
+
 def open_in_file_manager(path: Path) -> None:
     """Célmappa megnyitása az operációs rendszer fájlkezelőjében."""
     try:
         if sys.platform == "win32":
             os.startfile(path)  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
+            spawn_detached(["open", str(path)])
         else:
-            subprocess.Popen(["xdg-open", str(path)])
+            spawn_detached(["xdg-open", str(path)])
     except OSError as exc:
         log.warning("A mappa megnyitása nem sikerült: %s", exc)
 
@@ -328,10 +345,10 @@ def reveal_in_file_manager(path: Path) -> None:
             if sys.platform == "win32":
                 # Egyetlen sztringként adjuk át: a CreateProcess pontosan ezt kapja,
                 # nem fut se cmd.exe, se shell, ami újraértelmezné az idézőjeleket.
-                subprocess.Popen(explorer_select_command(path))
+                spawn_detached(explorer_select_command(path))
                 return
             if sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", str(path)])
+                spawn_detached(["open", "-R", str(path)])
                 return
         except OSError as exc:
             log.warning("A fájl megmutatása nem sikerült: %s", exc)
@@ -1381,9 +1398,14 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                     "depth": self.v_depth.get(), "threads": self.v_threads.get(),
                     "same_host": self.v_same.get(), "robots": self.v_robots.get(),
                     "existing": self.v_existing.get(), "html": self.v_html.get()}
+            # Ugyanaz a minta, mint az állapotfájlnál: előbb ideiglenes fájlba írunk,
+            # és csak a kész tartalom lép a régi helyére. Így áramszünet vagy
+            # összeomlás esetén sem marad csonka, olvashatatlan beállításfájl.
             with suppress(OSError, TypeError):
                 SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-                SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                tmp = SETTINGS_FILE.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                atomic_replace(tmp, SETTINGS_FILE)
 
         def _on_existing_changed(self, *_args: object) -> None:
             if self.manager is not None:
