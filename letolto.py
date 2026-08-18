@@ -90,6 +90,7 @@ SUPERVISOR_TICK: Final = 0.15          # ilyen sűrűn nézi a felügyelő a sz�
 EXT_COLUMNS: Final = 6             # ennyi kiterjesztés fér egy sorba a panelen
 UI_BATCH: Final = 400              # egy frissítési körben feldolgozott események száma
 UI_TICK_MS: Final = 150            # a GUI frissítési üteme
+EXT_SYNC_MS: Final = 350           # gépelés után ennyivel igazítjuk a panelt a szűrőhöz
 UI_ITEM_THROTTLE: Final = 0.3      # egy fájl sorát legfeljebb ilyen sűrűn frissítjük
 SPEED_WINDOW: Final = 0.5          # sebességmérés legrövidebb ablaka
 LOG_MAX_LINES: Final = 500
@@ -300,6 +301,26 @@ def open_in_file_manager(path: Path) -> None:
         log.warning("A mappa megnyitása nem sikerült: %s", exc)
 
 
+def reveal_in_file_manager(path: Path) -> None:
+    """Egy fájl megmutatása a fájlkezelőben, lehetőleg kijelölve.
+
+    Windowson az Intéző /select kapcsolója nyit új ablakot a fájlra állva;
+    ha a fájl még nincs meg, a mappáját nyitjuk meg.
+    """
+    if path.is_file():
+        try:
+            if sys.platform == "win32":
+                # A /select után szóköz nélkül, egy paraméterként kell az útvonal.
+                subprocess.Popen(["explorer", f"/select,{path}"])
+                return
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(path)])
+                return
+        except OSError as exc:
+            log.warning("A fájl megmutatása nem sikerült: %s", exc)
+    open_in_file_manager(path.parent if path.parent.is_dir() else path)
+
+
 def make_client(threads: int, timeout: float = 30.0) -> httpx.Client:
     """Szálak közt megosztott HTTP-kliens, a szálszámhoz igazított kapcsolatkészlettel."""
     return httpx.Client(
@@ -359,6 +380,9 @@ CHECKED_MARK: Final = "☑"
 UNCHECKED_MARK: Final = "☐"
 NO_EXT_LABEL: Final = "(nincs kiterjesztés)"
 HTML_LABEL: Final = "html"
+# Az üres mező "minden kiterjesztést" jelent, ezért az "egyetlen sem" állapotnak
+# saját jelölés kell. Egyetlen valódi címkére sem illik, így a szűrés üresen tér vissza.
+NONE_TOKEN: Final = "(egyik sem)"
 
 
 def ext_label(url: str, is_page: bool = False) -> str:
@@ -390,19 +414,39 @@ class ScanResult:
         return dict(sorted(groups.items(), key=lambda kv: (kv[0] == NO_EXT_LABEL, kv[0])))
 
 
-def matching_extensions(result: ScanResult, wanted: set[str], want_html: bool) -> set[str]:
-    """A megadott (kézzel beírt) kiterjesztésekhez tartozó címkék kiválasztása.
+def parse_ext_filter(text: str) -> set[str]:
+    """A "Kiterjesztések" mező szövegéből a keresett címkék halmaza."""
+    return {e.strip().lstrip(".").lower() for e in text.split(",") if e.strip()}
+
+
+def choose_labels(labels: Iterable[str], wanted: set[str], want_html: bool) -> set[str]:
+    """A megadott (kézzel beírt) kérésnek megfelelő kiterjesztés-címkék.
 
     Üres kérés esetén minden címke kell, a HTML kivételével - azt külön
     kapcsoló szabályozza, mert a legtöbb esetben nem a lapok kellenek.
     """
-    labels = set(result.by_extension())
-    chosen = {lab for lab in labels if lab.lower() in wanted} if wanted else set(labels)
+    known = set(labels)
+    chosen = {lab for lab in known if lab.lower() in wanted} if wanted else set(known)
     if want_html:
         chosen.add(HTML_LABEL)
     else:
         chosen.discard(HTML_LABEL)
-    return chosen & labels
+    return chosen & known
+
+
+def ext_filter_text(labels: Iterable[str]) -> str:
+    """A kipipált címkékből a mezőbe illő szöveg - mintha kézzel írták volna be.
+
+    A HTML-t külön jelölőnégyzet kezeli, ezért kimarad. Ha semmi sincs
+    kipipálva, jelezni kell: az üres mező ugyanis "minden kiterjesztést" jelent.
+    """
+    picked = [lab for lab in labels if lab != HTML_LABEL]
+    return ", ".join(picked) if picked else NONE_TOKEN
+
+
+def matching_extensions(result: ScanResult, wanted: set[str], want_html: bool) -> set[str]:
+    """A talált címkék közül a kért kiterjesztésekhez tartozók."""
+    return choose_labels(result.by_extension(), wanted, want_html)
 
 
 @dataclass(slots=True)
@@ -1257,6 +1301,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self._pending_rows: dict[str, tuple] = {}
             self._known_rows: set[str] = set()
             self._ext_vars: dict[str, tk.BooleanVar] = {}
+            self._ext_sync = False              # a két irány ne írja egymást körbe-körbe
+            self._ext_filter_job: str | None = None
             # Külön attribútum, hogy teszteléskor kicserélhető legyen.
             self.overwrite_dialog = OverwriteDialog
             self._log_lines = 0
@@ -1268,6 +1314,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.v_dir.trace_add("write", self._on_dir_changed)
             self.v_threads.trace_add("write", self._on_threads_changed)
             self.v_existing.trace_add("write", self._on_existing_changed)
+            self.v_ext.trace_add("write", self._on_ext_filter_changed)
+            self.v_html.trace_add("write", self._on_ext_filter_changed)
             self._pump_job = self.after(UI_TICK_MS, self._pump)
             self.after(200, self._autoload_state)     # összeomlás utáni folytatás felkínálása
             self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1454,8 +1502,10 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.b_pause = ttk.Button(bar, text="Szünet", command=self._pause, state="disabled")
             self.b_stop = ttk.Button(bar, text="Leállítás", command=self._stop, state="disabled")
             self.b_open = ttk.Button(bar, text="Mappa megnyitása", command=self._open_dir)
+            self.b_settings = ttk.Button(bar, text="Beállítások mappája",
+                                         command=self._open_settings_dir)
             for button in (self.b_scan, self.b_load, self.b_start, self.b_pause,
-                           self.b_stop, self.b_open):
+                           self.b_stop, self.b_open, self.b_settings):
                 button.pack(side="left", padx=3)
 
         def _build_table(self) -> None:
@@ -1516,6 +1566,18 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 open_in_file_manager(target)
             else:
                 messagebox.showinfo("Info", "A célkönyvtár még nem létezik.")
+
+        def _open_settings_dir(self) -> None:
+            """A beállításfájl mappájának megnyitása külön fájlkezelő ablakban."""
+            try:
+                SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                messagebox.showerror("Hiba", f"A beállítások mappája nem érhető el:\n{exc}")
+                return
+            if not SETTINGS_FILE.is_file():
+                self._save_settings()      # legyen mit megnézni az első indításkor is
+            reveal_in_file_manager(SETTINGS_FILE)
+            self._write_log(f"Beállítások helye: {SETTINGS_FILE}")
 
         def _ensure_manager(self) -> DownloadManager | None:
             raw = self.v_dir.get().strip()
@@ -1759,9 +1821,10 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
 
         def _on_extension_toggled(self, name: str) -> None:
             """Egy kiterjesztés ki/be pipálása az összes hozzá tartozó fájlra hat."""
+            value = self._ext_vars[name].get()
+            self._sync_ext_text()
             if self.manager is None:
                 return
-            value = self._ext_vars[name].get()
             urls = [i.url for i in self.manager.items.values() if i.label == name]
             self.manager.set_selected(urls, value)
             for url in urls:
@@ -1769,11 +1832,60 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self._flush_rows()
 
         def _set_all_extensions(self, value: bool) -> None:
-            for name, var in self._ext_vars.items():
-                var.set(value)
-                self._on_extension_toggled(name)
             if not self._ext_vars:
                 self._write_log("Előbb vizsgáld át az oldalt.")
+                return
+            self._ext_sync = True                # egyszerre állítunk mindent, utána írjuk a mezőt
+            try:
+                for name, var in self._ext_vars.items():
+                    var.set(value)
+                    self._on_extension_toggled(name)
+            finally:
+                self._ext_sync = False
+            self._sync_ext_text()
+
+        # -- a panel és a Kiterjesztések mező összehangolása ---------------
+        def _sync_ext_text(self) -> None:
+            """Panel -> mező: a kipipált címkék úgy jelennek meg, mintha beírták volna."""
+            if self._ext_sync or not self._ext_vars:
+                return
+            checked = [name for name, var in self._ext_vars.items() if var.get()]
+            self._ext_sync = True
+            try:
+                self.v_ext.set(ext_filter_text(checked))
+                html_var = self._ext_vars.get(HTML_LABEL)
+                if html_var is not None:
+                    self.v_html.set(html_var.get())
+            finally:
+                self._ext_sync = False
+
+        def _on_ext_filter_changed(self, *_args: object) -> None:
+            """Gépelés közben ne fusson minden leütésre; kis késleltetéssel igazítunk."""
+            if self._ext_sync or self._closing:
+                return
+            if self._ext_filter_job is not None:
+                with suppress(tk.TclError):
+                    self.after_cancel(self._ext_filter_job)
+            self._ext_filter_job = self.after(EXT_SYNC_MS, self._apply_ext_filter)
+
+        def _apply_ext_filter(self) -> None:
+            """Mező -> panel: a beírt kiterjesztések és a HTML kapcsoló érvényesítése."""
+            self._ext_filter_job = None
+            if not self._ext_vars:
+                return
+            try:
+                want_html = self.v_html.get()
+            except tk.TclError:                  # félkész érték a változóban
+                return
+            chosen = choose_labels(self._ext_vars, parse_ext_filter(self.v_ext.get()), want_html)
+            self._ext_sync = True                # a pipák állítása ne írja vissza a mezőt
+            try:
+                for name, var in self._ext_vars.items():
+                    if var.get() != (name in chosen):
+                        var.set(name in chosen)
+                        self._on_extension_toggled(name)
+            finally:
+                self._ext_sync = False
 
         def _on_scanned(self, result: ScanResult) -> None:
             self.scanning = False
@@ -1781,8 +1893,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             groups = result.by_extension()
             if self.manager is None:
                 return
-            wanted = {e.strip().lstrip(".").lower()
-                      for e in self.v_ext.get().split(",") if e.strip()}
+            wanted = parse_ext_filter(self.v_ext.get())
             checked = matching_extensions(result, wanted, self.v_html.get())
             labels = {url: name for name, urls in groups.items() for url in urls}
             # Minden találat bekerül a listába; a pipa dönti el, mi töltődik le.
@@ -1877,11 +1988,12 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
 
         def _on_close(self) -> None:
             self._closing = True
-            for job in (self._pump_job, self._autoload_job):   # függő időzítők leállítása
+            for job in (self._pump_job, self._autoload_job,   # függő időzítők leállítása
+                        self._ext_filter_job):
                 if job is not None:
                     with suppress(tk.TclError):
                         self.after_cancel(job)
-            self._pump_job = self._autoload_job = None
+            self._pump_job = self._autoload_job = self._ext_filter_job = None
             self._save_settings()
             self.scan_stop.set()
             if self.manager is not None:
@@ -1908,7 +2020,7 @@ def run_cli(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     outdir = Path(args.out).expanduser()
-    wanted = {e.strip().lstrip(".").lower() for e in (args.ext or "").split(",") if e.strip()}
+    wanted = parse_ext_filter(args.ext or "")
     client = make_client(args.threads)
     manager = DownloadManager(outdir, args.threads, on_event=_cli_event, client=client,
                               existing=args.meglevo)

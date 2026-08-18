@@ -36,7 +36,13 @@ legfeljebb néhány másodpercnyi letöltés vész el, és a program indításko
 a folytatást.
 
 **Válogatás.** Az átvizsgálás minden találatot összegyűjt, és megmutatja a talált
-kiterjesztéseket darabszámmal. Kipipálod, mi kell — csoportosan vagy fájlonként.
+kiterjesztéseket darabszámmal. Kipipálod, mi kell — csoportosan vagy fájlonként. A **Talált
+kiterjesztések** panel és a **Kiterjesztések** mező mindkét irányban követi egymást: amit a
+panelen kipipálsz, az beíródik a mezőbe (a html a saját kapcsolójára kerül), és amit a mezőbe
+írsz, az a panelen pipálódik ki.
+
+**Beállítások mappája.** Egy gomb a felületen új fájlkezelő-ablakot nyit a beállításfájl
+helyén (Windowson `%APPDATA%\PyLetolto\`, ott mindjárt ki is jelöli a fájlt).
 
 **Automatikus pipálás épség szerint.**
 
@@ -84,9 +90,10 @@ python tests/test_epseg.py         python tests/test_meglevo.py
 python tests/test_szalak.py        python tests/test_gui.py
 python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
+python tests/test_gui_szinkron.py
 ```
 
-Jelenlegi állás: **209 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **242 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---

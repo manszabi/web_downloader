@@ -77,6 +77,7 @@ Funkcionális teszt (test_letolto.py)            30 / 30
 Épség és felülírás (test_epseg.py, Xvfb)       28 / 28
 Válogatás, kiterjesztések (test_valogatas.py)  25 / 25
 GUI-válogatás (test_gui_valogatas.py, Xvfb)    19 / 19
+GUI-szinkron, beállítások (test_gui_szinkron)  33 / 33
 Élő szálszám-változtatás (test_szalak.py)      18 / 18
 Meglévő fájlok (test_meglevo.py)               16 / 16
 GUI végponttól végpontig (test_gui.py, Xvfb)   15 / 15
@@ -84,7 +85,7 @@ Terhelés és összeomlás (test_terheles.py)      14 / 14
 Összeomlás utáni folytatás (test_osszeomlas)   10 / 10
 Windows-specifikus ellenőrzések (test_windows)  34 / 34
 -------------------------------------------------------
-Összesen                                      209 / 209
+Összesen                                      242 / 242
 ruff (E,F,W,B,UP,SIM,C4,RUF,PL)        All checks passed
 mypy                                   Success: no issues found
 ```
@@ -165,6 +166,16 @@ PROBLEMAK: nincs
 * **HTML-lapok külön kapcsolón**: a kézi kiterjesztés-mező üresen hagyva minden kiterjesztést
   jelent, a HTML-lapokat viszont csak akkor tölti le, ha a „HTML letöltése" be van pipálva -
   így nem árasztják el a listát a bejárt oldalak, de egy kattintással kérhetők.
+* **A kiterjesztés-panel és a kézi mező összehangolása**: a „Talált kiterjesztések" pipái és
+  az alattuk lévő „Kiterjesztések" mező mindkét irányban követik egymást. Panelen pipálva a
+  mezőbe magától beíródik a kipipált címkék listája (`pdf, png`), a html pedig a „HTML
+  letöltése" kapcsolóra kerül; a mezőbe gépelve (350 ms szünet után, hogy ne fusson minden
+  leütésre) a panel pipái és velük a fájllista kijelölése igazodik. A körkörös felülírást
+  közös őrjelző akadályozza meg. Az üres mező továbbra is „minden kiterjesztést" jelent,
+  ezért az „egyik sem" állapotnak saját jelölése van: `(egyik sem)`.
+* **Beállítások mappája gomb**: külön fájlkezelő-ablakot nyit a beállításfájl helyén, és
+  Windowson az Intéző `/select` kapcsolójával rögtön ki is jelöli a fájlt. Ha a fájl még nem
+  létezik, a gomb kiírja az aktuális beállításokat, hogy legyen mit megnézni.
 * **Meglévő fájlok házirendje** (`Meglévő fájl:` legördülő, illetve `--meglevo` kapcsoló):
   * *kihagyás* – ami ott van, az kész (a régi viselkedés),
   * *méret-ellenőrzés* (alapértelmezett) – HEAD kéréssel összeveti a szerveri mérettel, és csak
@@ -187,7 +198,8 @@ PROBLEMAK: nincs
 
 1. **URL** és **célkönyvtár** megadása (az utóbbit a program megjegyzi).
 2. **Átvizsgálás** - minden találatot összegyűjt, majd ellenőrzi a meglévőket.
-3. A **talált kiterjesztések** panelen és a **fájllistában** a pipák igazítása.
+3. A **talált kiterjesztések** panelen (vagy a vele szinkronban lévő **Kiterjesztések**
+   mezőben) és a **fájllistában** a pipák igazítása.
 4. **Indítás** - a már meglévő, mégis kipipált fájloknál rákérdez a felülírásra.
 
 ## 8. Ismert korlátok
