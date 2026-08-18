@@ -1,0 +1,75 @@
+# Weboldal-letöltő – rövid használat
+
+## Telepítés és indítás (Windows)
+
+Tedd az `inditas.bat` és a `letolto.py` fájlt egy mappába, és kattints duplán a `.bat`-ra.
+Az első indításkor létrehoz egy `.venv` mappát, és telepíti az egyetlen függőséget (`httpx`).
+Python 3.11 vagy újabb szükséges.
+
+Más rendszeren: `pip install httpx`, majd `python letolto.py`.
+
+## A felület sorrendje
+
+1. **URL** – a kiindulási oldal címe.
+2. **Célkönyvtár** – a program megjegyzi, és következő indításkor magától visszatölti az itt
+   félbemaradt munkát.
+3. **Átvizsgálás** gomb. Ez most már *minden* találatot összegyűjt, majd háttérben ellenőrzi,
+   mi van már meg a lemezen.
+4. **Talált kiterjesztések** panel – kipipálod, mi kell. Az „Összes" / „Egyik sem" gomb az
+   egész csoportra hat. A kiterjesztés nélküli fájlok külön csoportba kerülnek.
+5. **Fájllista** – soronként is pipálható: kattints a ✓ oszlopra, vagy nyomj szóközt a
+   kijelölt sorokon. Fölötte „Összes kijelölése" / „Kijelölés törlése".
+6. **Indítás / Folytatás** – letölti a kipipált fájlokat.
+
+### Automatikus pipálás
+
+| A fájl állapota a célkönyvtárban | Mi történik |
+|---|---|
+| nincs meg | ki van pipálva → letöltendő |
+| megvan, de sérült vagy csonka | ki van pipálva → újratöltendő |
+| megvan és ép | **lekerül róla a pipa**, „kész" státuszt kap |
+
+Ha egy ép fájlt kézzel mégis kipipálsz, az Indításnál rákérdez: **Igen / Nem / Összes**.
+Az „Összes" a többi ilyen fájlra is igent mond, és nem kérdez újra.
+
+### Kiterjesztések mező és HTML
+
+A kézi mező üresen hagyva minden kiterjesztést jelent. A HTML-lapokat csak akkor tölti le,
+ha a **HTML letöltése** be van pipálva – így a bejárt oldalak nem árasztják el a listát.
+
+### Egyéb beállítások
+
+* **Mélység** – 0: csak a megadott oldal linkjei; 1 vagy több: al-oldalak bejárása is.
+* **Szálak** – letöltés közben is állítható, azonnal hat. Csökkentéskor a futó fájlok
+  befejeződnek, csak utána lép ki a fölös szál.
+* **Meglévő fájl** – *kihagyás* / *méret-ellenőrzés* (alapértelmezett) / *újratöltés*.
+* **robots.txt betartása** – ajánlott bekapcsolva hagyni.
+
+## Megszakítás és folytatás
+
+A *Szünet* és a *Leállítás* is folytatható állapotot hagy maga után; a részfájlok `.part`
+kiterjesztéssel készülnek, a haladást a célkönyvtárban lévő `_letoltes_allapot.json` őrzi.
+Áramszünet vagy programösszeomlás után legfeljebb néhány másodpercnyi letöltés vész el,
+a folytatás onnan indul.
+
+## Parancssori mód
+
+```
+python letolto.py https://pelda.hu/ -o C:\letoltesek -e pdf,zip -d 1 -t 8
+python letolto.py --no-gui -o C:\letoltesek          # csak a félbemaradtak folytatása
+```
+
+Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
+`--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
+
+## Tesztek
+
+```
+python test_letolto.py      python test_valogatas.py    python test_meglevo.py
+python test_epseg.py        python test_szalak.py       python test_gui.py
+python test_terheles.py     python test_osszeomlas.py   python test_windows.py
+python test_gui_valogatas.py
+```
+
+A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi
+kiszolgáló – a program működéséhez nem kell.
