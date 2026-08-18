@@ -51,9 +51,13 @@ def test_szkript(szkript: str) -> None:
         pytest.skip("ablakos teszt: nincs kepernyo (tkinter vagy DISPLAY hianyzik)")
     kesz = subprocess.run(
         [sys.executable, str(TESZTEK / szkript)],
-        capture_output=True, text=True, timeout=IDOKORLAT,
-        cwd=TESZTEK.parent, check=False,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},   # Windows: cp1250 konzol
+        capture_output=True, timeout=IDOKORLAT, cwd=TESZTEK.parent, check=False,
+        # A szkriptek ekezetes magyar szoveget irnak ki. A gyermek oldalan a
+        # PYTHONIOENCODING allitja a kimenet kodolasat, itt, a szulo oldalan
+        # pedig az encoding= - enelkul a Windows a cp1252-t hasznalna, es a
+        # dekodolas mar az elso "ő" betun elszallna.
+        text=True, encoding="utf-8", errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     if kesz.returncode != 0:
         hibak = [sor for sor in kesz.stdout.splitlines() if "[HIBA]" in sor]
