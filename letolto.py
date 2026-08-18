@@ -37,7 +37,7 @@ from hashlib import blake2b
 from html.parser import HTMLParser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Final
+from typing import Any, Final
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
 # Futásidejű őr: a StrEnum és a match-case miatt 3.11 az alsó határ.
@@ -965,7 +965,7 @@ class Item:
                 "label": self.label}
 
     @classmethod
-    def from_dict(cls, raw: dict) -> Item:
+    def from_dict(cls, raw: dict[str, Any]) -> Item:      # a JSON-ból bármi jöhet
         return cls(url=raw["url"], path=raw["path"], total=int(raw.get("total", 0)),
                    done=int(raw.get("done", 0)),
                    status=raw.get("status", Status.PENDING),

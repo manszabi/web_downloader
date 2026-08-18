@@ -81,7 +81,8 @@ class App(tk.Tk):
         self.manager: core.DownloadManager | None = None
         self.scan_stop = threading.Event()
         self.scanning = False
-        self._pending_rows: dict[str, tuple] = {}
+        # url -> a táblázat egy sorának cellái (a COLUMNS sorrendjében)
+        self._pending_rows: dict[str, tuple[str, ...]] = {}
         self._known_rows: set[str] = set()
         self._ext_vars: dict[str, tk.BooleanVar] = {}
         self._ext_sync = False              # a két irány ne írja egymást körbe-körbe

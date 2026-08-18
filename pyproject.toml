@@ -59,3 +59,11 @@ testpaths = ["tests"]
 python_files = ["futtato.py"]
 python_functions = ["test_*"]
 addopts = "-q"
+
+[tool.mypy]
+# Szigorú típusellenőrzés a programra. A tesztek szándékosan lazább,
+# egyfájlos szkriptek, ezért ők kimaradnak - ahogy a ruffnál is.
+python_version = "3.11"
+strict = true
+files = ["letolto.py", "letolto_gui.py"]
+exclude = "^tests/"
