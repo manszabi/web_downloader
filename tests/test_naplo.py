@@ -9,7 +9,8 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import letolto
-from letolto import DownloadManager, ScanConfig, Scanner, note, setup_file_log
+from letolto import (DownloadManager, ScanConfig, Scanner, close_file_log, note,
+                     setup_file_log)
 
 TMP = Path(tempfile.gettempdir()) / "letolto_naplo_teszt"
 R = []
@@ -22,9 +23,7 @@ def check(name, ok, info=""):
 
 def fresh_log(name="naplo.log"):
     """Uj, ures naplokornyezet: leakasztjuk a korabbi kezelot es torlunk mindent."""
-    for handler in list(letolto.file_log.handlers):
-        handler.close()
-        letolto.file_log.removeHandler(handler)
+    close_file_log()
     shutil.rmtree(TMP, ignore_errors=True)
     TMP.mkdir(parents=True)
     return setup_file_log(TMP / name)
@@ -95,9 +94,7 @@ check("a sikertelen rotalast nem probalja minden sornal", len(probalkozas) == 1,
 check("a naplo tovabb no a regi fajlban", path.stat().st_size > 500)
 
 print("\n--- 5. Nem irhato hely ---")
-for h in list(letolto.file_log.handlers):
-    h.close()
-    letolto.file_log.removeHandler(h)
+close_file_log()
 utkozo = TMP / "fajl_nem_mappa"
 utkozo.write_text("x", encoding="utf-8")
 check("nem irhato helyen None a valasz, kivetel nelkul",
@@ -136,10 +133,19 @@ check("benne vannak az atvizsgalas beallitasai", "robots.txt: betartva" in szove
 check("benne van az atvizsgalas eredmenye", "Átvizsgálás vége:" in szoveg, szoveg.strip()[-90:])
 check("benne van a celkonyvtar", "Célkönyvtár:" in szoveg and "2 szál" in szoveg)
 
-for h in list(letolto.file_log.handlers):
-    h.close()
-    letolto.file_log.removeHandler(h)
+close_file_log()
 shutil.rmtree(TMP, ignore_errors=True)
+
+print("\n--- 7. A figyelmeztetesek is a naploba kerulnek ---")
+path = fresh_log()
+letolto.log.warning("Proba figyelmeztetes: %s", "reszlet")
+check("a log.warning a fajlba kerul", "Proba figyelmeztetes: reszlet" in read(path))
+check("egyszer, nem ketszer", read(path).count("Proba figyelmeztetes") == 1, read(path))
+close_file_log()
+check("a lezaras mindket naplozorol leakaszt",
+      not letolto.file_log.handlers and not letolto.log.handlers)
+check("ketszer hivva sem hibazik", close_file_log() is None)
+
 
 print("\n=== OSSZEGZES: %d / %d teszt sikeres ===" % (sum(R), len(R)))
 sys.exit(0 if all(R) else 1)

@@ -6,6 +6,7 @@ from pathlib import Path
 # A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
 _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
+import testsrv
 import letolto
 from letolto import (Cancelled, RobotsRules, RobotsUnavailable,
                      ScanConfig, Scanner)
@@ -121,6 +122,10 @@ class FakeResponse:
         self.text = text
         self.headers = {}
 
+    def iter_text(self, size=8192):
+        for i in range(0, len(self.text), size):
+            yield self.text[i:i + size]
+
     def __enter__(self):
         return self
 
@@ -140,9 +145,8 @@ class FakeClient:
         self.calls = []
 
     def stream(self, method, url, timeout=None):
-        return FakeResponse(404, "")      # az oldalak maguk nem erdekesek itt
-
-    def get(self, url, timeout=None):
+        if not url.endswith("/robots.txt"):
+            return FakeResponse(404, "")  # az oldalak maguk nem erdekesek itt
         self.calls.append(url)
         resp = self.responses[min(len(self.calls) - 1, len(self.responses) - 1)]
         if isinstance(resp, Exception):
@@ -233,6 +237,59 @@ try:
 except Cancelled:
     check("a Leallitas gomb kozbeszol", True)
 check("nem varta ki a tobbi probalkozast", len(cli.calls) == 1, str(len(cli.calls)))
+
+
+print("\n--- 15. Tulsagosan nagy robots.txt ---")
+hosszu = "User-agent: *\nDisallow: /elso\n" + "# toltelek sor\n" * 60000 + "Disallow: /utolso"
+check("a toltelek tenyleg atlepi a hatart", len(hosszu) > letolto.ROBOTS_MAX_TEXT)
+sc = scanner(FakeClient(FakeResponse(200, hosszu)))
+check("a hatar elotti szabaly ervenyes", not sc._allowed(U + "/elso/x"))
+check("a hataron tuli resz mar nem", sc._allowed(U + "/utolso"))
+
+csonka = "User-agent: *\nDisallow: /jo\n" + "#" * (letolto.ROBOTS_MAX_TEXT + 10) + "\nDisallow: /nem"
+sc = scanner(FakeClient(FakeResponse(200, csonka)))
+check("a fel sor nem valik szabalya", sc._allowed(U + "/nem"))
+check("az ep sorok viszont megmaradnak", not sc._allowed(U + "/jo"))
+
+
+print("\n--- 16. Valodi kiszolgaloval, valodi HTTP-vel ---")
+srv = testsrv.serve(8811)
+BASE = "http://127.0.0.1:8811/"
+client = letolto.make_client(4)
+
+
+def valos_scan(stop_on_error=False):
+    cfg = ScanConfig(root=BASE, depth=1, same_host=True, respect_robots=True,
+                     stop_on_robots_error=stop_on_error)
+    LOG.clear()
+    return Scanner(cfg, client, lambda m: LOG.append(m), threading.Event()).run()
+
+
+testsrv.H.robots_status = 200
+testsrv.H.robots_body = "User-agent: *\nDisallow: /files/\nAllow: /files/a.bin\n"
+res = valos_scan()
+nevek = [u.rsplit("/", 1)[-1] for u in res.all_urls]
+check("az Allow kivetele atjon a valos halozaton is", "a.bin" in nevek, str(sorted(nevek)))
+check("a tiltott tarsai viszont nem", "b.bin" not in nevek and "d.pdf" not in nevek,
+      str(sorted(nevek)))
+check("a mas mappaban levo fajl megmarad", any(n.startswith("e.bin") for n in nevek),
+      str(sorted(nevek)))
+
+testsrv.H.robots_status = 503
+res = valos_scan(stop_on_error=True)
+check("valos 5xx + pipa -> nincs talalat", not res.all_urls, str(res.all_urls[:3]))
+check("es a naplo megmondja, miert", any("leáll" in m for m in LOG), str(LOG[-1:]))
+
+res = valos_scan(stop_on_error=False)
+check("valos 5xx pipa nelkul -> folytatja", len(res.all_urls) > 5, str(len(res.all_urls)))
+check("de a naplo jelzi a gondot", any("folytatódik" in m for m in LOG), str(LOG[-1:]))
+
+testsrv.H.robots_status = 404
+res = valos_scan(stop_on_error=True)
+check("hianyzo robots.txt valos halozaton is rendben", len(res.all_urls) > 5)
+
+client.close()
+srv.shutdown()
 
 
 print("\n=== OSSZEGZES: %d / %d teszt sikeres ===" % (sum(R), len(R)))

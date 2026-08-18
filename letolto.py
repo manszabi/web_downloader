@@ -96,6 +96,7 @@ HTTP_RANGE_NOT_SATISFIABLE: Final = 416
 HTTP_SERVER_ERROR: Final = 500          # ettől fölfelé a kiszolgáló hibája
 ROBOTS_TRIES: Final = 3                # a robots.txt lekérésének próbálkozásai
 ROBOTS_RETRY_WAIT: Final = 1.0         # az újrapróbálkozások közti alapszünet (mp)
+ROBOTS_MAX_TEXT: Final = 512 * 1024    # ennyi karakternél hosszabb robots.txt-t nem olvasunk
 RETRY_STATUS: Final = frozenset({408, 425, 429, 500, 502, 503, 504})
 HTML_EXTS: Final = frozenset({"", ".html", ".htm", ".xhtml", ".php", ".asp",
                               ".aspx", ".jsp", ".cgi", ".shtml"})
@@ -166,8 +167,11 @@ def _brief(exc: BaseException) -> str:
 #  Naplófájl
 # --------------------------------------------------------------------------- #
 
-# Külön naplózó a fájlnak: a felület és a parancssor kimenetét nem érinti, ezért
-# a fájlba részletesebben írhatunk, mint amennyi a képernyőn hasznos lenne.
+# Két naplózó dolgozik együtt. A "letolto" a program hangja: a figyelmeztetései
+# parancssorban a képernyőre is kimennek. A "letolto.naplo" csak a fájlba ír
+# (propagate=False), így oda részletesebben lehet naplózni, mint amennyi a
+# képernyőn hasznos lenne. A rotáló kezelő mindkettőre felkerül, tehát a
+# figyelmeztetések és a hibák sem maradnak ki a naplófájlból.
 file_log = logging.getLogger("letolto.naplo")
 file_log.propagate = False
 
@@ -182,14 +186,16 @@ class RotatingLog(RotatingFileHandler):
     egy percig nem próbálkozunk újra (különben minden egyes sornál próbálnánk).
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)   # type: ignore[arg-type]
+    def __init__(self, filename: Path, maxBytes: int = 0, backupCount: int = 0,
+                 encoding: str = "utf-8", delay: bool = True) -> None:
+        super().__init__(filename, maxBytes=maxBytes, backupCount=backupCount,
+                         encoding=encoding, delay=delay)
         self._retry_after = 0.0
 
-    def shouldRollover(self, record: logging.LogRecord) -> int:
+    def shouldRollover(self, record: logging.LogRecord) -> bool:
         if time.monotonic() < self._retry_after:
-            return 0
-        return super().shouldRollover(record)
+            return False
+        return bool(super().shouldRollover(record))
 
     def rotate(self, source: str, dest: str) -> None:
         atomic_replace(Path(source), Path(dest))   # Windowson újrapróbálkozik
@@ -221,9 +227,21 @@ def setup_file_log(path: Path = LOG_FILE) -> Path | None:
         return None
     handler.setFormatter(logging.Formatter("%(asctime)s  [%(threadName)s]  %(message)s",
                                            datefmt="%Y-%m-%d %H:%M:%S"))
-    file_log.addHandler(handler)
-    file_log.setLevel(logging.INFO)
+    for logger in (file_log, log):
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
     return path
+
+
+def close_file_log() -> None:
+    """A naplófájl lezárása és leakasztása. Kétszer hívva sem hibázik."""
+    handlers = set()
+    for logger in (file_log, log):
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handlers.add(handler)
+    for handler in handlers:          # ugyanaz a kezelő mindkettőn rajta van
+        handler.close()
 
 
 def note(message: str) -> None:
@@ -734,15 +752,14 @@ class Scanner:
         reason = ""
         for attempt in range(1, ROBOTS_TRIES + 1):
             try:
-                resp = self.client.get(f"{origin}/robots.txt", timeout=10.0)
+                with self.client.stream("GET", f"{origin}/robots.txt", timeout=10.0) as resp:
+                    if resp.status_code == HTTP_OK:
+                        return RobotsRules.parse(self._robots_text(resp))
+                    if resp.status_code < HTTP_SERVER_ERROR:
+                        return RobotsRules()   # nincs robots.txt -> nincs tiltás
+                    reason = f"HTTP {resp.status_code}"
             except httpx.HTTPError as exc:
                 reason = type(exc).__name__
-            else:
-                if resp.status_code == HTTP_OK:
-                    return RobotsRules.parse(resp.text)
-                if resp.status_code < HTTP_SERVER_ERROR:
-                    return RobotsRules()   # nincs robots.txt -> nincs tiltás
-                reason = f"HTTP {resp.status_code}"
             if attempt < ROBOTS_TRIES:
                 self.on_log(f"A robots.txt nem érhető el ({reason}) - {attempt}. kísérlet, "
                             f"újrapróbálom: {origin}")
@@ -755,6 +772,25 @@ class Scanner:
         self.on_log(f"A(z) {origin} robots.txt-je nem érhető el ({reason}), "
                     "az átvizsgálás folytatódik.")
         return RobotsRules()
+
+    @staticmethod
+    def _robots_text(resp: httpx.Response) -> str:
+        """A robots.txt szövege, korlátos mérettel.
+
+        Az RFC 9309 §2.5 legalább 500 KiB feldolgozását várja el; ennél többet
+        jóindulatú kiszolgáló nem küld, egy rosszindulatútól viszont ugyanúgy
+        nem akarjuk a memóriát félteni, mint a túl nagy HTML lapoknál. A levágott
+        utolsó sor fél szabály lehetne, ezért azt eldobjuk.
+        """
+        parts: list[str] = []
+        size = 0
+        for chunk in resp.iter_text(64 * 1024):
+            parts.append(chunk)
+            size += len(chunk)
+            if size >= ROBOTS_MAX_TEXT:
+                text = "".join(parts)
+                return text[:text.rfind("\n") + 1]
+        return "".join(parts)
 
     def _allowed(self, url: str) -> bool:
         if not self.cfg.respect_robots:
@@ -1602,6 +1638,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.v_existing.trace_add("write", self._on_existing_changed)
             self.v_ext.trace_add("write", self._on_ext_filter_changed)
             self.v_html.trace_add("write", self._on_ext_filter_changed)
+            self.v_robots.trace_add("write", self._on_robots_changed)
+            self._on_robots_changed()
             self._pump_job = self.after(UI_TICK_MS, self._pump)
             self.after(200, self._autoload_state)     # összeomlás utáni folytatás felkínálása
             self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1644,6 +1682,14 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 tmp = SETTINGS_FILE.with_suffix(".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 atomic_replace(tmp, SETTINGS_FILE)
+
+        def _on_robots_changed(self, *_args: object) -> None:
+            """A robots.txt kikapcsolásakor az 5xx-kapcsoló értelmét veszti.
+
+            Ilyenkor a program a robots.txt-t le sem kéri, tehát nincs mit
+            eldönteni; a szürke jelölőnégyzet ezt mutatja meg.
+            """
+            self.c_robots5xx.configure(state="normal" if self.v_robots.get() else "disabled")
 
         def _on_existing_changed(self, *_args: object) -> None:
             if self.manager is not None:
@@ -1750,8 +1796,9 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             # Kipipálva: az elérhetetlen robots.txt leállítja az átvizsgálást (RFC 9309),
             # üresen hagyva a program a régi, megengedő módon folytatja.
             self.v_robots5xx = tk.BooleanVar(value=False)
-            ttk.Checkbutton(box, text="5xx hibánál leáll", variable=self.v_robots5xx).grid(
-                row=5, column=3, columnspan=2, sticky="w")
+            self.c_robots5xx = ttk.Checkbutton(box, text="5xx hibánál leáll",
+                                               variable=self.v_robots5xx)
+            self.c_robots5xx.grid(row=5, column=3, columnspan=2, sticky="w", padx=(12, 0))
 
             label("Meglévő fájl:", 6, 0)
             self.v_existing = tk.StringVar(value=str(Existing.VERIFY))
@@ -2379,7 +2426,7 @@ def run_cli(args: argparse.Namespace) -> int:
         cfg = ScanConfig(root=args.url, depth=args.depth,
                          same_host=not args.any_host, respect_robots=not args.ignore_robots,
                          stop_on_robots_error=args.robots_5xx_stop)
-        found = Scanner(cfg, client, _cli_log, threading.Event()).run()
+        found = Scanner(cfg, client, log.info, threading.Event()).run()
         groups = found.by_extension()
         chosen = matching_extensions(found, wanted, args.html)
         log.info("Talált kiterjesztések: %s", ", ".join(
@@ -2414,12 +2461,6 @@ def _cli_event(kind: str, payload: object) -> None:
     if kind == "log":
         note(str(payload))                   # ugyanez a sor a naplófájlba is
         print("\r" + str(payload).ljust(78))
-
-
-def _cli_log(message: str) -> None:
-    """Az átvizsgálás üzenetei: képernyőre és a naplófájlba is."""
-    log.info(message)
-    note(message)
 
 
 def main(argv: list[str] | None = None) -> int:

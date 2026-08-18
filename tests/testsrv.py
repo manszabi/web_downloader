@@ -55,6 +55,8 @@ def make_files():
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     stall = 0.0            # osztalyszintu lassitas byte-onkent
+    robots_status = 404    # a /robots.txt valasza (200 eseten a robots_body megy vissza)
+    robots_body = ""
 
     def log_message(self, *a):
         pass
@@ -79,7 +81,19 @@ class H(BaseHTTPRequestHandler):
         if path == "/sub/page3.html":
             return self._html(HTML_PAGE3)
         if path == "/robots.txt":
-            self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
+            if H.robots_status == 200:
+                body = H.robots_body.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if not head:
+                    self.wfile.write(body)
+                return
+            self.send_response(H.robots_status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
         from urllib.parse import unquote
         key = unquote(path)
@@ -161,6 +175,7 @@ def temp_settings(letolto, name):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     letolto.SETTINGS_FILE = path
+    letolto.LOG_FILE = path.with_name(f"{name}.log")   # a naplo se a valodi helyere menjen
     return path
 
 

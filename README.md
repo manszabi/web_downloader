@@ -92,10 +92,10 @@ python tests/test_szalak.py        python tests/test_gui.py
 python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
-python tests/test_naplo.py
+python tests/test_naplo.py         python tests/test_gui_robots.py
 ```
 
-Jelenlegi állás: **374 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **410 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---
@@ -130,7 +130,9 @@ példány), a rotálás kimarad, de a naplózás nem áll le és a program sem h
 
 A program alapértelmezés szerint betartja a `robots.txt` tiltásait, az RFC 9309
 (Robots Exclusion Protocol) szabályai szerint: a `*` és a záró `$` joker is érvényes, és
-ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer.
+ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer. A fájlból
+legfeljebb 512 KiB-ot olvasunk (az RFC 500 KiB-ot kér), így egy végtelen `robots.txt` sem viszi
+el a memóriát.
 
 Ha a `robots.txt` **nem érhető el** (5xx vagy hálózati hiba), a program háromszor újrapróbálja,
 majd a beállítás dönt: a *5xx hibánál leáll* pipa (parancssorban `--robots-5xx-stop`) az RFC
