@@ -74,7 +74,8 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 
 | Fájl | Mi ez |
 |---|---|
-| `letolto.py` | maga a program (GUI + parancssor) |
+| `letolto.py` | a program magja: átvizsgálás, letöltés, parancssori mód – ez az indítandó fájl |
+| `letolto_gui.py` | a grafikus felület (tkinter); a mag lustán importálja, csak GUI módban |
 | `inditas.bat` | Windows-indító, függőség-ellenőrzéssel |
 | `HASZNALAT.md` | rövid használati útmutató |
 | `ruff.toml` | a lint rögzített beállításai (a program futtatásához nem kell) |

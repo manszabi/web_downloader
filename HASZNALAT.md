@@ -100,6 +100,12 @@ python letolto.py --no-gui -o C:\letoltesek          # csak a félbemaradtak fol
 Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
+## Fájlok
+
+A program két fájlból áll: a `letolto.py` a mag (átvizsgálás, letöltés, parancssor), a
+`letolto_gui.py` a felület. Indítani mindig a `letolto.py`-t kell – a felületet az hívja be,
+amikor szükség van rá. Így a parancssori mód olyan gépen is elfut, ahol nincs tkinter.
+
 ## Tesztek
 
 ```

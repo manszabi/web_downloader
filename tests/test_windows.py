@@ -337,7 +337,9 @@ letolto._spawned.clear()
 
 # ------------------------------------------------- 8/d. beallitasok mentese
 print("\n--- 8/d. A beállításfájl mentése atomi ---")
-check("ideiglenes fájlba ír, és csak utána cserél", "atomic_replace(tmp, SETTINGS_FILE)" in src_txt)
+gui_txt = repo_file("letolto_gui.py").read_text(encoding="utf-8")
+check("ideiglenes fájlba ír, és csak utána cserél",
+      "core.atomic_replace(tmp, core.SETTINGS_FILE)" in gui_txt)
 check("az atomi csere Windowson újrapróbálkozik", "def atomic_replace" in src_txt
       and "PermissionError" in src_txt)
 
