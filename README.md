@@ -65,7 +65,7 @@ python letolto.py https://pelda.hu/ -o ./letoltesek -e pdf,zip -d 1 -t 8
 python letolto.py --no-gui -o ./letoltesek      # csak a félbemaradtak folytatása
 ```
 
-Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
+Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
 ---
@@ -91,16 +91,53 @@ python tests/test_epseg.py         python tests/test_meglevo.py
 python tests/test_szalak.py        python tests/test_gui.py
 python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
-python tests/test_gui_szinkron.py
+python tests/test_gui_szinkron.py  python tests/test_robots.py
+python tests/test_naplo.py         python tests/test_gui_robots.py
 ```
 
-Jelenlegi állás: **302 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **410 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
+
+---
+
+## Naplófájl
+
+A program a beállítások mellé rotáló naplót ír, tehát nem nő korlátlanul:
+
+| Rendszer | Hely |
+|---|---|
+| Windows | `%APPDATA%\PyLetolto\naplo.log` |
+| Linux, macOS | `~/.letolto_naplo.log` |
+
+A fájl 1 MB-onként fordul, és 3 mentést tart meg (`naplo.log.1` … `naplo.log.3`), vagyis a napló
+összesen legfeljebb ~4 MB. UTF-8 kódolású, és minden sor tartalmazza az időt és a szál nevét:
+
+```
+2026-08-18 19:27:13  [dl]  Letöltés: http://pelda.hu/a.bin -> C:\letoltesek\pelda.hu\a.bin
+2026-08-18 19:27:13  [dl]  Kész: pelda.hu/a.bin (293.0 KB)
+```
+
+Bekerül a program indulása és kilépése, a célkönyvtár és a szálszám, az átvizsgálás
+paraméterei és eredménye, fájlonként a forrás cím és a célfájl, a kész letöltések, valamint
+minden hiba és figyelmeztetés – az újrapróbálkozások, a méreteltérés miatti újratöltés és a
+`robots.txt` gondjai (5xx, tiltás) is. A GUI *Beállítások mappája* gombja a napló helyét is
+kiírja. Ha a fájl épp zárolt (Windowson víruskereső, megnyitott szerkesztő vagy egy másik
+példány), a rotálás kimarad, de a naplózás nem áll le és a program sem hibázik el tőle.
 
 ---
 
 ## Felelős használat
 
-A program alapértelmezés szerint betartja a `robots.txt` tiltásait. A szálszámot érdemes
+A program alapértelmezés szerint betartja a `robots.txt` tiltásait, az RFC 9309
+(Robots Exclusion Protocol) szabályai szerint: a `*` és a záró `$` joker is érvényes, és
+ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer. A fájlból
+legfeljebb 512 KiB-ot olvasunk (az RFC 500 KiB-ot kér), így egy végtelen `robots.txt` sem viszi
+el a memóriát.
+
+Ha a `robots.txt` **nem érhető el** (5xx vagy hálózati hiba), a program háromszor újrapróbálja,
+majd a beállítás dönt: a *5xx hibánál leáll* pipa (parancssorban `--robots-5xx-stop`) az RFC
+szerinti szigorú olvasat, vagyis inkább nem jár be semmit; pipa nélkül – ez az alapértelmezés –
+naplóüzenettel folytatja. A 4xx (nincs ilyen fájl) egyik esetben sem hiba: az azt jelenti, hogy
+az oldal nem tiltott semmit. A szálszámot érdemes
 barátságos szinten (4–8) tartani, hogy ne terheld túl a kiszolgálót. A letöltött tartalom
 felhasználására a forrásoldal feltételei vonatkoznak.

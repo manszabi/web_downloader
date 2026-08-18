@@ -7,6 +7,7 @@ ellenorizzuk.
 """
 import io
 import os
+import ntpath
 import string
 import subprocess
 import sys
@@ -42,26 +43,34 @@ def check(name, ok, info=""):
 # --------------------------------------------------------------- 1. eszkoznevek
 print("\n--- 1. Windows foglalt eszköznevek ---")
 RESERVED = ["CON", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9",
-            "con", "Con.txt", "nul.pdf", "AUX.tar.gz", "COM1.bin"]
+            "con", "Con.txt", "nul.pdf", "AUX.tar.gz", "COM1.bin",
+            # A pont elotti szokoz nem menti meg a nevet: a "CON .txt" is a CON eszkoz.
+            "CON .txt", "aux .bin", "NUL ",
+            # A konzol ket eszkozneve es a COM0/LPT0, amit a Microsoft dokumentacioja
+            # szinten a foglaltak koze sorol.
+            "CONIN$", "CONOUT$", "COM0.txt", "LPT0"]
 
 
 def is_reserved(name: str) -> bool:
-    """A Windows szabalya: a kiterjesztes elotti resz szamit."""
-    return name.partition(".")[0].upper() in (
-        {"CON", "PRN", "AUX", "NUL"}
-        | {f"COM{d}" for d in "123456789"} | {f"LPT{d}" for d in "123456789"})
+    """A Windows szabalya: a kiterjesztes elotti resz szamit, a szokozok nelkul."""
+    return name.partition(".")[0].rstrip(" ").upper() in (
+        {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+        | {f"COM{d}" for d in "0123456789"} | {f"LPT{d}" for d in "0123456789"})
 
 
 bad = [n for n in RESERVED if is_reserved(safe_component(n))]
 check("egyik foglalt név sem marad meg", not bad, str(bad))
 print("    példák:", {n: safe_component(n) for n in RESERVED[:5]})
 
-# a Python 3.13+ sajat ellenorzesevel is osszevetjuk, ha elerheto
-if hasattr(os.path, "isreserved"):
-    still = [n for n in RESERVED if os.path.isreserved(safe_component(n))]
-    check("os.path.isreserved szerint is rendben", not still, str(still))
+# A CPython sajat, Windowsra irt ellenorzesevel is osszevetjuk. Az ntpath Linuxon is
+# importalhato, tehat a szabalyt itt is meg tudjuk kerdezni a "hivatalos" forrastol.
+if hasattr(ntpath, "isreserved"):
+    still = [n for n in RESERVED if ntpath.isreserved(safe_component(n))]
+    check("a CPython ntpath.isreserved szerint is rendben", not still, str(still))
+    hianyzo = [n for n in RESERVED if ntpath.isreserved(n) and not is_reserved(n)]
+    check("a sajat listank nem szukebb a CPythonenal", not hianyzo, str(hianyzo))
 else:
-    print("    (os.path.isreserved csak Python 3.13+; a saját listánk fut)")
+    print("    (az ntpath.isreserved csak Python 3.13+; a saját listánk fut)")
 
 # --------------------------------------------------------------- 2. karakterek
 print("\n--- 2. Tiltott karakterek és záró jelek ---")

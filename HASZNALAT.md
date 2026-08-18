@@ -63,7 +63,25 @@ Ebben a fájlban őrződik az URL, a célkönyvtár, a kiterjesztés-szűrő, a 
 * **Szálak** – letöltés közben is állítható, azonnal hat. Csökkentéskor a futó fájlok
   befejeződnek, csak utána lép ki a fölös szál.
 * **Meglévő fájl** – *kihagyás* / *méret-ellenőrzés* (alapértelmezett) / *újratöltés*.
-* **robots.txt betartása** – ajánlott bekapcsolva hagyni.
+* **robots.txt betartása** – ajánlott bekapcsolva hagyni. A szabályokat az RFC 9309
+  szerint értelmezi: a `*` és a záró `$` joker is érvényes, ütközéskor a leghosszabb minta
+  dönt, azonos hossznál pedig az `Allow` – így az `Allow` felül tudja írni a tágabb
+  `Disallow`-ot.
+* **5xx hibánál leáll** – mi legyen, ha maga a `robots.txt` nem érhető el (a kiszolgáló 5xx-et
+  ad, vagy elszáll a kapcsolat). A program ilyenkor háromszor próbálkozik, egyre hosszabb
+  szünettel; ha egyik sem sikerül, **kipipálva** leállítja az átvizsgálást (nem tudjuk, mit
+  tiltott volna az oldal – ez az RFC 9309 szigorú olvasata), **pipa nélkül** pedig
+  naplóüzenettel folytatja. A hiányzó `robots.txt` (404) nem tartozik ide: az azt jelenti,
+  hogy nincs tiltás.
+
+## Naplófájl
+
+A futás eseményei a beállítások mellé, rotáló naplófájlba kerülnek: Windowson
+`%APPDATA%\PyLetolto\naplo.log`, máshol `~/.letolto_naplo.log`. 1 MB-onként fordul, 3 mentést
+tart meg (`naplo.log.1` … `naplo.log.3`), tehát legfeljebb ~4 MB-ot foglal. Benne van az
+indulás és a kilépés, a célkönyvtár, az átvizsgálás paraméterei és eredménye, fájlonként a
+forrás cím és a célfájl, továbbá minden hiba – az újrapróbálkozások és a `robots.txt` gondjai
+is. A pontos helyét a *Beállítások mappája* gomb írja ki.
 
 ## Megszakítás és folytatás
 
@@ -79,7 +97,7 @@ python letolto.py https://pelda.hu/ -o C:\letoltesek -e pdf,zip -d 1 -t 8
 python letolto.py --no-gui -o C:\letoltesek          # csak a félbemaradtak folytatása
 ```
 
-Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
+Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
 ## Tesztek
@@ -88,7 +106,8 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
 python test_letolto.py      python test_valogatas.py    python test_meglevo.py
 python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
-python test_gui_valogatas.py                            python test_gui_szinkron.py
+python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
+python test_naplo.py        python test_gui_robots.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi

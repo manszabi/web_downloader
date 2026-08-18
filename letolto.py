@@ -37,10 +37,10 @@ from dataclasses import field as dataclass_field
 from enum import StrEnum
 from hashlib import blake2b
 from html.parser import HTMLParser
+from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 # Futásidejű őr: a StrEnum és a match-case miatt 3.11 az alsó határ.
 if sys.version_info < (3, 11):  # noqa: UP036
@@ -72,7 +72,19 @@ def _settings_path() -> Path:
     return Path.home() / ".letolto_beallitasok.json"
 
 
+def _log_path() -> Path:
+    """A naplófájl a beállítások mellé kerül, ugyanazzal a névadási szokással."""
+    appdata = os.environ.get("APPDATA")
+    if sys.platform == "win32" and appdata:
+        return Path(appdata) / "PyLetolto" / "naplo.log"
+    return Path.home() / ".letolto_naplo.log"
+
+
 SETTINGS_FILE: Final = _settings_path()
+LOG_FILE: Final = _log_path()
+LOG_MAX_BYTES: Final = 1024 * 1024     # ekkora naplófájlnál jön a rotálás (~10 ezer sor)
+LOG_BACKUPS: Final = 3                 # naplo.log.1 .. .3 -> a napló összesen legfeljebb 4 MB
+LOG_ROTATE_RETRY: Final = 60.0         # sikertelen rotálás után ennyi ideig nem próbáljuk újra
 STATE_VERSION: Final = 2
 MAX_RETRIES: Final = 4
 MAX_RETRY_AFTER: Final = 30            # a Retry-After fejlécet ennyi másodpercre korlátozzuk
@@ -81,6 +93,10 @@ HTTP_OK: Final = 200
 HTTP_PARTIAL: Final = 206
 HTTP_BAD_REQUEST: Final = 400
 HTTP_RANGE_NOT_SATISFIABLE: Final = 416
+HTTP_SERVER_ERROR: Final = 500          # ettől fölfelé a kiszolgáló hibája
+ROBOTS_TRIES: Final = 3                # a robots.txt lekérésének próbálkozásai
+ROBOTS_RETRY_WAIT: Final = 1.0         # az újrapróbálkozások közti alapszünet (mp)
+ROBOTS_MAX_TEXT: Final = 512 * 1024    # ennyi karakternél hosszabb robots.txt-t nem olvasunk
 RETRY_STATUS: Final = frozenset({408, 425, 429, 500, 502, 503, 504})
 HTML_EXTS: Final = frozenset({"", ".html", ".htm", ".xhtml", ".php", ".asp",
                               ".aspx", ".jsp", ".cgi", ".shtml"})
@@ -96,15 +112,18 @@ SPEED_WINDOW: Final = 0.5          # sebességmérés legrövidebb ablaka
 LOG_MAX_LINES: Final = 500
 
 # Windows-on foglalt eszköznevek (Microsoft: Naming Files, Paths, and Namespaces)
+# A DOS-korból örökölt eszköznevek. A Microsoft dokumentációja a COM0/LPT0 nevet is
+# idesorolja, a ¹²³ jeleket pedig számjegynek veszi a Windows; a CONIN$/CONOUT$ a
+# konzol két félkész eszköze (a CPython ntpath.isreserved is számol velük).
 _WIN_RESERVED: Final = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{d}" for d in "123456789¹²³"}
-    | {f"LPT{d}" for d in "123456789¹²³"}
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"COM{d}" for d in "0123456789¹²³"}
+    | {f"LPT{d}" for d in "0123456789¹²³"}
 )
 _ILLEGAL_CHARS: Final = re.compile(r'[<>:"|?*\\/\x00-\x1f]')
 _MAX_COMPONENT: Final = 100            # egy útvonalelem max hossza
-MAX_ABS_PATH: Final = 240              # a Windows MAX_PATH (260) alatt maradunk
-_MAX_PATH: Final = 240                 # visszafelé kompatibilis név
+MAX_ABS_PATH: Final = 240              # a teljes út korlátja: a Windows MAX_PATH (260) alatt
+MAX_REL_PATH: Final = 240              # a célkönyvtáron belüli út ennél hosszabban lapul
 
 
 class Status(StrEnum):
@@ -129,6 +148,10 @@ class Cancelled(Exception):
     """A felhasználó leállította a munkát."""
 
 
+class RobotsUnavailable(Exception):
+    """A robots.txt nem érhető el, és a beállítás szerint ez teljes tiltás."""
+
+
 class Retryable(Exception):
     """Átmeneti hiba, újrapróbálható."""
 
@@ -141,6 +164,92 @@ def _brief(exc: BaseException) -> str:
     """Rövid, felületre való hibaszöveg (a httpx üzenetei többsorosak)."""
     text = str(exc).strip().splitlines()
     return (text[0] if text else type(exc).__name__)[:120]
+
+
+# --------------------------------------------------------------------------- #
+#  Naplófájl
+# --------------------------------------------------------------------------- #
+
+# Két naplózó dolgozik együtt. A "letolto" a program hangja: a figyelmeztetései
+# parancssorban a képernyőre is kimennek. A "letolto.naplo" csak a fájlba ír
+# (propagate=False), így oda részletesebben lehet naplózni, mint amennyi a
+# képernyőn hasznos lenne. A rotáló kezelő mindkettőre felkerül, tehát a
+# figyelmeztetések és a hibák sem maradnak ki a naplófájlból.
+file_log = logging.getLogger("letolto.naplo")
+file_log.propagate = False
+
+
+class RotatingLog(RotatingFileHandler):
+    """Rotáló naplófájl, amely a névcserén nem bukik el.
+
+    Windowson a fájlt fogva tarthatja a víruskereső, egy megnyitott szerkesztő
+    vagy a program egy másik példánya, és ilyenkor az átnevezés ``PermissionError``-ral
+    elszáll. A rotálás nem ér annyit, hogy emiatt üzenetek vesszenek el vagy
+    elszálljon a program: a hibát elnyeljük, a napló tovább nő a régi fájlban, és
+    egy percig nem próbálkozunk újra (különben minden egyes sornál próbálnánk).
+    """
+
+    def __init__(self, filename: Path, maxBytes: int = 0, backupCount: int = 0,
+                 encoding: str = "utf-8", delay: bool = True) -> None:
+        super().__init__(filename, maxBytes=maxBytes, backupCount=backupCount,
+                         encoding=encoding, delay=delay)
+        self._retry_after = 0.0
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:
+        if time.monotonic() < self._retry_after:
+            return False
+        return bool(super().shouldRollover(record))
+
+    def rotate(self, source: str, dest: str) -> None:
+        atomic_replace(Path(source), Path(dest))   # Windowson újrapróbálkozik
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            self._retry_after = time.monotonic() + LOG_ROTATE_RETRY
+            if self.stream is None:                # a szülő lezárta, de nem nyitotta újra
+                with suppress(OSError):
+                    self.stream = self._open()
+
+
+def setup_file_log(path: Path = LOG_FILE) -> Path | None:
+    """A rotáló naplófájl bekapcsolása; a visszatérési érték a fájl helye.
+
+    Napló nélkül is működnie kell a programnak: ha a mappa nem írható (csak
+    olvasható profil, teli lemez), a hibát megjegyezzük, és megyünk tovább.
+    """
+    if file_log.handlers:                          # kétszer ne akasszunk rá kezelőt
+        return Path(file_log.handlers[0].baseFilename)   # type: ignore[attr-defined]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingLog(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
+                              encoding="utf-8", delay=True)
+    except OSError as exc:
+        log.warning("A naplófájl nem hozható létre (%s): %s", path, exc)
+        return None
+    handler.setFormatter(logging.Formatter("%(asctime)s  [%(threadName)s]  %(message)s",
+                                           datefmt="%Y-%m-%d %H:%M:%S"))
+    for logger in (file_log, log):
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return path
+
+
+def close_file_log() -> None:
+    """A naplófájl lezárása és leakasztása. Kétszer hívva sem hibázik."""
+    handlers = set()
+    for logger in (file_log, log):
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handlers.add(handler)
+    for handler in handlers:          # ugyanaz a kezelő mindkettőn rajta van
+        handler.close()
+
+
+def note(message: str) -> None:
+    """Egy sor a naplófájlba. Naplózás nélkül (tesztek) csendben elszáll."""
+    file_log.info("%s", message)
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +278,9 @@ def human_time(sec: float | None) -> str:
 
 
 def _stem(name: str) -> str:
-    return name.partition(".")[0].upper()
+    """A név eszköznév-része. A "CON .txt" is a CON eszközt jelenti Windowson,
+    ezért a pont előtti szóközöket le kell vágni."""
+    return name.partition(".")[0].rstrip(" ").upper()
 
 
 def safe_component(raw: str) -> str:
@@ -204,7 +315,7 @@ def url_to_relpath(url: str) -> Path:
         tag = _short_hash(parts.query)
         segments[-1] = f"{root}_{tag}.{ext}" if dot else f"{segments[-1]}_{tag}"
     rel = Path(safe_component(parts.netloc), *segments)
-    if len(str(rel)) > _MAX_PATH:                 # túl hosszú út lapítása
+    if len(str(rel)) > MAX_REL_PATH:              # túl hosszú út lapítása
         rel = Path(safe_component(parts.netloc),
                    f"{_short_hash(url)}_{segments[-1][-60:]}")
     return rel
@@ -499,12 +610,125 @@ def matching_extensions(result: ScanResult, wanted: set[str], want_html: bool) -
     return choose_labels(result.by_extension(), wanted, want_html)
 
 
+# --------------------------------------------------------------------------- #
+#  robots.txt (RFC 9309)
+# --------------------------------------------------------------------------- #
+
+# A saját terméknevünk; a robots.txt csoportfejlécei ehhez illeszkednek.
+ROBOTS_TOKEN: Final = USER_AGENT.split("/")[0]
+
+
+@dataclass(frozen=True, slots=True)
+class RobotsRule:
+    """Egy Allow/Disallow sor: illeszkedési minta és a specifikusság mértéke."""
+
+    pattern: re.Pattern[str]
+    length: int          # a nyers minta hossza - ez dönt az ütköző szabályok közt
+    allow: bool
+
+
+class RobotsRules:
+    """Egy kiszolgáló robots.txt-jének ránk vonatkozó szabályai (RFC 9309).
+
+    A szabvány két ponton tér el az egyszerű, prefixes olvasattól:
+
+    * a mintában a ``*`` tetszőleges karaktersort, a záró ``$`` a cím végét
+      jelenti (§2.2.2);
+    * nem az első illeszkedő sor dönt, hanem a leghosszabb minta, és azonos
+      hossz esetén az ``Allow`` nyer (§2.2.2). Enélkül az ``Allow`` sosem tudná
+      felülírni a nála tágabb ``Disallow``-ot, azaz értelmét vesztené.
+    """
+
+    def __init__(self, rules: Iterable[RobotsRule] = ()) -> None:
+        self._rules = tuple(rules)
+
+    # -- feldolgozás ------------------------------------------------------
+    @classmethod
+    def parse(cls, text: str, token: str = ROBOTS_TOKEN) -> RobotsRules:
+        """A fájlból a ránk vonatkozó csoport szabályai.
+
+        A csoportokat a ``User-agent`` sorok nyitják; egy szabálysor után
+        következő ``User-agent`` már új csoportot kezd. Az azonos nevű
+        csoportok összeolvadnak, az ismeretlen kulcsok (Sitemap, Crawl-delay)
+        kimaradnak.
+        """
+        groups: dict[str, list[RobotsRule]] = {}
+        agents: list[str] = []      # az épp nyitott csoport fejlécei
+        in_header = True            # még a csoport fejlécénél tartunk?
+
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            key, sep, value = line.partition(":")
+            if not sep:
+                continue
+            key, value = key.strip().lower(), value.strip()
+
+            if key == "user-agent":
+                if not in_header:   # az előző csoport lezárult
+                    agents, in_header = [], True
+                if value:
+                    agents.append(value.lower())
+                    groups.setdefault(value.lower(), [])
+                continue
+
+            if key not in {"allow", "disallow"}:
+                continue
+            in_header = False
+            rule = cls._rule(value, allow=key == "allow")
+            if rule is None:        # üres vagy értelmezhetetlen minta
+                continue
+            for agent in agents:    # csoportfej nélküli szabály sehová nem tartozik
+                groups[agent].append(rule)
+
+        return cls(groups.get(cls._best_group(groups, token), ()))
+
+    @staticmethod
+    def _best_group(groups: dict[str, list[RobotsRule]], token: str) -> str:
+        """A terméknevünkre illeszkedő leghosszabb csoportnév, egyébként a "*"."""
+        token = token.lower()
+        best = ""
+        for agent in groups:
+            if agent != "*" and token.startswith(agent) and len(agent) > len(best):
+                best = agent
+        return best or "*"
+
+    @staticmethod
+    def _rule(value: str, *, allow: bool) -> RobotsRule | None:
+        """Egy szabálysor értékéből minta, vagy None, ha a sor nem szabály.
+
+        Az üres érték nem tiltás és nem is engedés, a "/" vagy "*" jellel nem
+        kezdődő útvonal pedig érvénytelen - mindkettő figyelmen kívül marad.
+        """
+        if not value or not value.startswith(("/", "*")):
+            return None
+        body, tail = (value[:-1], r"\Z") if value.endswith("$") else (value, "")
+        # A "*" mentén darabolunk, és csak a darabokat oldjuk fel: így a %2A
+        # nem válik joker jellé.
+        regex = ".*".join(re.escape(unquote(part)) for part in body.split("*"))
+        return RobotsRule(re.compile(regex + tail), len(value), allow)
+
+    # -- döntés -----------------------------------------------------------
+    def allowed(self, url: str) -> bool:
+        """Bejárható-e a cím? Ha egyik szabály sem illeszkedik, igen."""
+        parts = urlparse(url)
+        path = unquote(parts.path or "/")
+        if parts.query:
+            path += "?" + unquote(parts.query)
+        best: RobotsRule | None = None
+        for rule in self._rules:
+            if rule.pattern.match(path) and (best is None or rule.length > best.length
+                                             or (rule.length == best.length and rule.allow)):
+                best = rule
+        return best is None or best.allow
+
+
 @dataclass(slots=True)
 class ScanConfig:
     root: str
     depth: int = 0
     same_host: bool = True
     respect_robots: bool = True
+    stop_on_robots_error: bool = False   # elérhetetlen robots.txt: leállás vagy folytatás
     max_pages: int = 500
 
 
@@ -517,28 +741,70 @@ class Scanner:
         self.client = client
         self.on_log = on_log
         self.stop = stop
-        self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots: dict[str, RobotsRules] = {}
 
     # -- robots.txt ------------------------------------------------------
+    def _fetch_robots(self, origin: str) -> RobotsRules:
+        """A kiszolgáló szabályai; elérhetetlen fájl esetén a beállítás dönt.
+
+        Az RFC 9309 §2.3.1.4 különbséget tesz a kétféle hiba között: a 4xx azt
+        jelenti, hogy *nincs* szabály (minden bejárható), az 5xx viszont azt,
+        hogy *nem tudjuk*, mi a szabály - ez teljes tiltást kíván. Egy villanásnyi
+        szerverhiba ne döntsön ekkorát, ezért előbb néhányszor újrapróbáljuk; a
+        hálózati hibát (időtúllépés, megszakadt kapcsolat) ugyanígy kezeljük,
+        mert az is "nem tudjuk".
+        """
+        reason = ""
+        for attempt in range(1, ROBOTS_TRIES + 1):
+            try:
+                with self.client.stream("GET", f"{origin}/robots.txt", timeout=10.0) as resp:
+                    if resp.status_code == HTTP_OK:
+                        return RobotsRules.parse(self._robots_text(resp))
+                    if resp.status_code < HTTP_SERVER_ERROR:
+                        return RobotsRules()   # nincs robots.txt -> nincs tiltás
+                    reason = f"HTTP {resp.status_code}"
+            except httpx.HTTPError as exc:
+                reason = type(exc).__name__
+            if attempt < ROBOTS_TRIES:
+                self.on_log(f"A robots.txt nem érhető el ({reason}) - {attempt}. kísérlet, "
+                            f"újrapróbálom: {origin}")
+                if self.stop.wait(ROBOTS_RETRY_WAIT * attempt):
+                    raise Cancelled
+        if self.cfg.stop_on_robots_error:
+            raise RobotsUnavailable(
+                f"A(z) {origin} robots.txt-je {ROBOTS_TRIES} próbálkozásra sem érhető el "
+                f"({reason}), az átvizsgálás leáll.")
+        self.on_log(f"A(z) {origin} robots.txt-je nem érhető el ({reason}), "
+                    "az átvizsgálás folytatódik.")
+        return RobotsRules()
+
+    @staticmethod
+    def _robots_text(resp: httpx.Response) -> str:
+        """A robots.txt szövege, korlátos mérettel.
+
+        Az RFC 9309 §2.5 legalább 500 KiB feldolgozását várja el; ennél többet
+        jóindulatú kiszolgáló nem küld, egy rosszindulatútól viszont ugyanúgy
+        nem akarjuk a memóriát félteni, mint a túl nagy HTML lapoknál. A levágott
+        utolsó sor fél szabály lehetne, ezért azt eldobjuk.
+        """
+        parts: list[str] = []
+        size = 0
+        for chunk in resp.iter_text(64 * 1024):
+            parts.append(chunk)
+            size += len(chunk)
+            if size >= ROBOTS_MAX_TEXT:
+                text = "".join(parts)
+                return text[:text.rfind("\n") + 1]
+        return "".join(parts)
+
     def _allowed(self, url: str) -> bool:
         if not self.cfg.respect_robots:
             return True
         parts = urlparse(url)
         origin = f"{parts.scheme}://{parts.netloc}"
         if origin not in self._robots:
-            parser: RobotFileParser | None = RobotFileParser()
-            assert parser is not None
-            try:
-                resp = self.client.get(f"{origin}/robots.txt", timeout=10.0)
-                if resp.status_code == HTTP_OK:
-                    parser.parse(resp.text.splitlines())
-                else:
-                    parser = None
-            except httpx.HTTPError:
-                parser = None
-            self._robots[origin] = parser
-        parser = self._robots[origin]
-        return True if parser is None else parser.can_fetch(USER_AGENT, url)
+            self._robots[origin] = self._fetch_robots(origin)
+        return self._robots[origin].allowed(url)
 
     @staticmethod
     def _looks_like_page(url: str) -> bool:
@@ -610,6 +876,9 @@ class Scanner:
         A szűrés tudatosan a felhasználóra marad, hogy az átvizsgálás után a
         talált kiterjesztések közül lehessen válogatni.
         """
+        note(f"Átvizsgálás indul: {self.cfg.root} (mélység {self.cfg.depth}, "
+             f"{'csak azonos domain' if self.cfg.same_host else 'bármely domain'}, "
+             f"robots.txt: {'betartva' if self.cfg.respect_robots else 'figyelmen kívül'})")
         crawl = self._Crawl(result=ScanResult(), visited=set(), seen_files=set(),
                             todo=deque([(self.cfg.root, 0)]),
                             root_host=urlparse(self.cfg.root).netloc)
@@ -622,27 +891,32 @@ class Scanner:
             if url in visited:
                 continue
             visited.add(url)
-            if not self._allowed(url):
-                self.on_log(f"robots.txt tiltja: {url}")
-                continue
-
             try:
+                if not self._allowed(url):
+                    self.on_log(f"robots.txt tiltja: {url}")
+                    continue
+
                 page = self._read_page(url)
+                if page is None:                   # nem HTML -> maga is fájl
+                    if url not in seen_files:
+                        seen_files.add(url)
+                        result.files.append(url)
+                    continue
+
+                result.pages.append(url)           # ez egy letölthető HTML lap
+                base, links = page
+                self.on_log(f"Átvizsgálás (mélység {depth}): {url} - {len(links)} hivatkozás")
+                self._sort_links(links, base, depth, crawl)
+            except RobotsUnavailable as exc:
+                self.on_log(str(exc))
+                break
             except Cancelled:
                 break
-            if page is None:                       # nem HTML -> maga is fájl
-                if url not in seen_files:
-                    seen_files.add(url)
-                    result.files.append(url)
-                continue
-
-            result.pages.append(url)               # ez egy letölthető HTML lap
-            base, links = page
-            self.on_log(f"Átvizsgálás (mélység {depth}): {url} - {len(links)} hivatkozás")
-            self._sort_links(links, base, depth, crawl)
 
         if len(visited) >= self.cfg.max_pages:
             self.on_log(f"Elértük az oldalkorlátot ({self.cfg.max_pages}).")
+        note(f"Átvizsgálás vége: {len(result.pages)} lap, {len(result.files)} fájl, "
+             f"{len(visited)} megnyitott cím")
         return result
 
     def _sort_links(self, links: list[str], base: str, depth: int,
@@ -789,6 +1063,8 @@ class DownloadManager:
         self._used_paths: set[str] = set()
         self._speed = 0.0                 # bájt/mp, exponenciálisan simítva
         self._speed_mark = (time.monotonic(), 0)
+        note(f"Célkönyvtár: {self.outdir} ({self.threads} szál, "
+             f"meglévő fájl: {self.existing})")
 
     # -- életciklus -------------------------------------------------------
     @property
@@ -1107,6 +1383,7 @@ class DownloadManager:
     def _download(self, item: Item) -> None:
         dest = self.outdir / item.path
         part = dest.with_name(dest.name + ".part")
+        note(f"Letöltés: {item.url} -> {dest}")
         try:
             self._gate()
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1366,6 +1643,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.v_existing.trace_add("write", self._on_existing_changed)
             self.v_ext.trace_add("write", self._on_ext_filter_changed)
             self.v_html.trace_add("write", self._on_ext_filter_changed)
+            self.v_robots.trace_add("write", self._on_robots_changed)
+            self._on_robots_changed()
             self._pump_job = self.after(UI_TICK_MS, self._pump)
             self.after(200, self._autoload_state)     # összeomlás utáni folytatás felkínálása
             self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1388,6 +1667,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             for name, var in (("url", self.v_url), ("dir", self.v_dir), ("ext", self.v_ext),
                               ("depth", self.v_depth), ("threads", self.v_threads),
                               ("same_host", self.v_same), ("robots", self.v_robots),
+                              ("robots5xx", self.v_robots5xx),
                               ("existing", self.v_existing), ("html", self.v_html)):
                 if name in saved:
                     with suppress(tk.TclError, ValueError):
@@ -1397,6 +1677,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             data = {"url": self.v_url.get(), "dir": self.v_dir.get(), "ext": self.v_ext.get(),
                     "depth": self.v_depth.get(), "threads": self.v_threads.get(),
                     "same_host": self.v_same.get(), "robots": self.v_robots.get(),
+                    "robots5xx": self.v_robots5xx.get(),
                     "existing": self.v_existing.get(), "html": self.v_html.get()}
             # Ugyanaz a minta, mint az állapotfájlnál: előbb ideiglenes fájlba írunk,
             # és csak a kész tartalom lép a régi helyére. Így áramszünet vagy
@@ -1406,6 +1687,14 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 tmp = SETTINGS_FILE.with_suffix(".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 atomic_replace(tmp, SETTINGS_FILE)
+
+        def _on_robots_changed(self, *_args: object) -> None:
+            """A robots.txt kikapcsolásakor az 5xx-kapcsoló értelmét veszti.
+
+            Ilyenkor a program a robots.txt-t le sem kéri, tehát nincs mit
+            eldönteni; a szürke jelölőnégyzet ezt mutatja meg.
+            """
+            self.c_robots5xx.configure(state="normal" if self.v_robots.get() else "disabled")
 
         def _on_existing_changed(self, *_args: object) -> None:
             if self.manager is not None:
@@ -1509,6 +1798,12 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.v_robots = tk.BooleanVar(value=True)
             ttk.Checkbutton(box, text="robots.txt betartása", variable=self.v_robots).grid(
                 row=5, column=2, sticky="w")
+            # Kipipálva: az elérhetetlen robots.txt leállítja az átvizsgálást (RFC 9309),
+            # üresen hagyva a program a régi, megengedő módon folytatja.
+            self.v_robots5xx = tk.BooleanVar(value=False)
+            self.c_robots5xx = ttk.Checkbutton(box, text="5xx hibánál leáll",
+                                               variable=self.v_robots5xx)
+            self.c_robots5xx.grid(row=5, column=3, columnspan=2, sticky="w", padx=(12, 0))
 
             label("Meglévő fájl:", 6, 0)
             self.v_existing = tk.StringVar(value=str(Existing.VERIFY))
@@ -1601,6 +1896,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
 
         # -- segédek ------------------------------------------------------
         def _write_log(self, message: str) -> None:
+            note(message)                    # ugyanez a sor a naplófájlba is
             self.log.configure(state="normal")
             self.log.insert("end", message + "\n")
             self._log_lines += 1
@@ -1633,6 +1929,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 self._save_settings()      # legyen mit megnézni az első indításkor is
             reveal_in_file_manager(SETTINGS_FILE)
             self._write_log(f"Beállítások helye: {SETTINGS_FILE}")
+            self._write_log(f"Naplófájl: {LOG_FILE}")
 
         def _ensure_manager(self) -> DownloadManager | None:
             raw = self.v_dir.get().strip()
@@ -1669,7 +1966,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 return
             cfg = ScanConfig(root=url, depth=self.v_depth.get(),
                              same_host=self.v_same.get(),
-                             respect_robots=self.v_robots.get())
+                             respect_robots=self.v_robots.get(),
+                             stop_on_robots_error=self.v_robots5xx.get())
             self.scanning = True
             self.scan_stop.clear()
             self.b_scan.configure(state="disabled")
@@ -2131,7 +2429,8 @@ def run_cli(args: argparse.Namespace) -> int:
     manager.load_state()
     if args.url:
         cfg = ScanConfig(root=args.url, depth=args.depth,
-                         same_host=not args.any_host, respect_robots=not args.ignore_robots)
+                         same_host=not args.any_host, respect_robots=not args.ignore_robots,
+                         stop_on_robots_error=args.robots_5xx_stop)
         found = Scanner(cfg, client, log.info, threading.Event()).run()
         groups = found.by_extension()
         chosen = matching_extensions(found, wanted, args.html)
@@ -2165,6 +2464,7 @@ def run_cli(args: argparse.Namespace) -> int:
 
 def _cli_event(kind: str, payload: object) -> None:
     if kind == "log":
+        note(str(payload))                   # ugyanez a sor a naplófájlba is
         print("\r" + str(payload).ljust(78))
 
 
@@ -2182,15 +2482,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--html", action="store_true", help="a HTML lapok is töltődjenek le")
     parser.add_argument("--any-host", action="store_true", help="más domainek is")
     parser.add_argument("--ignore-robots", action="store_true", help="robots.txt figyelmen kívül")
+    parser.add_argument("--robots-5xx-stop", action="store_true",
+                        help="ha a robots.txt 5xx miatt elérhetetlen, álljon le az átvizsgálás")
     parser.add_argument("--meglevo", choices=[str(e) for e in Existing],
                         default=str(Existing.VERIFY),
                         help="mi történjék a már meglévő fájlokkal")
     parser.add_argument("--no-gui", action="store_true", help="parancssori futtatás")
     parser.add_argument("-V", "--version", action="version", version=f"letolto {__version__}")
     args = parser.parse_args(argv)
-    if args.no_gui or args.url:
-        return run_cli(args)
-    return run_gui()
+    cli = bool(args.no_gui or args.url)
+    setup_file_log()
+    note("-" * 70)
+    note(f"PyLetolto {__version__} indul ({'parancssor' if cli else 'grafikus felület'}), "
+         f"Python {sys.version.split()[0]}, {sys.platform}")
+    try:
+        return run_cli(args) if cli else run_gui()
+    finally:
+        note(f"PyLetolto {__version__} kilép")
 
 
 if __name__ == "__main__":
