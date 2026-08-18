@@ -21,6 +21,7 @@ kínál, hogy a hálózati hibák szimulálhatók legyenek.
 | 9 | Szálanként külön `requests.Session` | Nincs kapcsolat-újrahasznosítás a szálak között | kódelemzés |
 | 10 | Korlátlanul növő naplóablak | Hosszú futásnál memóriaszivárgás a GUI-ban | kódelemzés |
 | 11 | Leállításkor minden hátralévő munka elindult, csak hogy azonnal kivételt dobjon | Lassú leállás, fölösleges eseményáradat | kódelemzés |
+| 17 | Újraindítás után a program a **saját, hibátlanul letöltött fájljaira** is rákérdezett volna a felülírásnál, mert a kész elemekről nem került le a pipa | Az Indítás után modális kérdések sorozata olyan fájlokra, amelyeket senki nem akart újratölteni; a GUI-teszt emiatt végtelenül várt | a repó `tests/` szerkezetében futtatva derült ki |
 | 16 | Az átvizsgálás nem vette figyelembe, mi van már meg a lemezen: a felhasználónak kellett kézzel kipipálgatnia a már meglévőket | Ismételt futtatásnál könnyű volt fölöslegesen újratölteni, vagy épp kihagyni egy sérült fájlt | tervezési hiányosság |
 | 15 | Az átvizsgálás a kézi kiterjesztés-szűrő alapján **eldobta** a nem kért találatokat | A felhasználó nem is látta, mi van még az oldalon; szűrőváltáshoz újra kellett vizsgálni | tervezési hiányosság |
 | 19 | A DPI-javítás felénél a beillesztés nem illeszkedett, de a másik fele igen: `self.scale` definiálatlanul maradt volna | A GUI azonnal összeomlott volna induláskor | a saját ellenőrző futás fogta meg, mielőtt kiadtam volna |

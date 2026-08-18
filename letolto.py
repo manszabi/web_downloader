@@ -725,8 +725,13 @@ class DownloadManager:
                 # Csak akkor kész, ha a méret igazoltan egyezik a szerverivel.
                 # Egyébként ellenőrzésre vár - így a máshonnan odakerült csonka
                 # fájl nem csúszik át késznek.
-                item.status = (Status.DONE if item.total == item.done and item.total
-                               else Status.CHECK)
+                if item.total == item.done and item.total:
+                    item.status = Status.DONE
+                    # A pipa is lekerül róla: amit már letöltöttünk, azt nem
+                    # akarjuk véletlenül felülírni a következő indításnál.
+                    item.selected = False
+                else:
+                    item.status = Status.CHECK
             elif part.exists():
                 item.done = part.stat().st_size
                 item.status = Status.PAUSED

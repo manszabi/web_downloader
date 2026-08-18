@@ -9,7 +9,9 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import tempfile
 TMP = Path(tempfile.gettempdir()) / "letolto_terheles"
 import testsrv
@@ -110,10 +112,9 @@ check("12 megszakitas utan is bitre ep a fajl", dest.exists() and md5f(dest) == 
 # ---------------------------------------------------- 3. osszeomlas (kill -9)
 print("\n--- 3. Osszeomlas-szimulacio (kill -9 letoltes kozben) ---")
 OUT = fresh("s_c")
-HERE = Path(__file__).parent
 worker = f"""
 import sys, time
-sys.path.insert(0, r"{HERE}")
+sys.path[:0] = [r"{_HERE}", r"{_HERE.parent}"]
 from letolto import DownloadManager
 m = DownloadManager(r"{OUT}", 1)
 m.load_state(); m.add_urls(["{url}"]); m.start()

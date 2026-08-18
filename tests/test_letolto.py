@@ -8,7 +8,9 @@ import time
 import urllib.parse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import testsrv
 from letolto import (DownloadManager, ScanConfig, Scanner, Status, human,
                       make_client, safe_component, url_to_relpath)

@@ -1,7 +1,9 @@
 """Osszeomlas -> GUI ujraindul: most magatol betolti-e?"""
 import subprocess, sys, time, shutil, os
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+# A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import testsrv
 srv = testsrv.serve(8791); import tempfile
 OUT = Path(tempfile.gettempdir()) / "letolto_osszeomlas"
@@ -12,7 +14,8 @@ def check(n, ok, i=""):
 
 WORKER = Path(tempfile.gettempdir()) / "_letolto_crash_worker.py"
 WORKER.write_text(f"""
-import sys, time; sys.path.insert(0,"{Path(__file__).parent}")
+import sys, time
+sys.path[:0] = [r"{_HERE}", r"{_HERE.parent}"]
 from letolto import DownloadManager
 m = DownloadManager("{OUT}", 2); m.load_state()
 m.add_urls(["http://127.0.0.1:8791/huge/nolink","http://127.0.0.1:8791/files/a.bin","http://127.0.0.1:8791/files/b.bin"])

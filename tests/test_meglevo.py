@@ -6,7 +6,9 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import testsrv
 from letolto import DownloadManager, Existing, Status, make_client
 

@@ -13,7 +13,18 @@ import sys
 import tempfile
 from pathlib import Path, PureWindowsPath
 
-sys.path.insert(0, str(Path(__file__).parent))
+# A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]
+
+
+def repo_file(name: str) -> Path:
+    """A repó egy fájlja, akárhol is fut a teszt (gyökér vagy tests/ mappa)."""
+    for base in (_HERE, _HERE.parent):
+        candidate = base / name
+        if candidate.is_file():
+            return candidate
+    return _HERE / name
 import letolto
 from letolto import (MAX_ABS_PATH, atomic_replace, fit_path, safe_component,
                      url_to_relpath)
@@ -233,7 +244,7 @@ print("    ezen a gépen:", letolto.SETTINGS_FILE)
 
 # --------------------------------------------------------------- 9. bat fajl
 print("\n--- 9. Az indito .bat ellenőrzése ---")
-bat = Path(__file__).parent / "inditas.bat"
+bat = repo_file("inditas.bat")
 raw = bat.read_bytes()
 check("a .bat tiszta ASCII", all(b < 128 for b in raw))
 check("CRLF sorvégek", b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b""))

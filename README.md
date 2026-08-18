@@ -71,23 +71,23 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
 | `letolto.py` | maga a program (GUI + parancssor) |
 | `inditas.bat` | Windows-indító, függőség-ellenőrzéssel |
 | `HASZNALAT.md` | rövid használati útmutató |
-| `TESZTJEGYZOKONYV.md` | a fejlesztés során talált hibák, mérések, ismert korlátok |
-| `testsrv.py` | a tesztekhez tartozó helyi kiszolgáló |
-| `test_*.py` | tesztek (a futtatáshoz nem kellenek) |
+| `tests/` | tesztek és a hozzájuk tartozó helyi kiszolgáló (a futtatáshoz nem kellenek) |
+| `tests/TESZTJEGYZOKONYV.md` | a fejlesztés során talált hibák, mérések, ismert korlátok |
 
 ---
 
 ## Tesztek
 
 ```bash
-python test_letolto.py      python test_valogatas.py     python test_meglevo.py
-python test_epseg.py        python test_szalak.py        python test_gui.py
-python test_terheles.py     python test_osszeomlas.py    python test_windows.py
-python test_gui_valogatas.py
+python tests/test_letolto.py       python tests/test_valogatas.py
+python tests/test_epseg.py         python tests/test_meglevo.py
+python tests/test_szalak.py        python tests/test_gui.py
+python tests/test_terheles.py      python tests/test_osszeomlas.py
+python tests/test_windows.py       python tests/test_gui_valogatas.py
 ```
 
 Jelenlegi állás: **209 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
-A `TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
+A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---
 
