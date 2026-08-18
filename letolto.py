@@ -40,7 +40,6 @@ from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 # Futásidejű őr: a StrEnum és a match-case miatt 3.11 az alsó határ.
 if sys.version_info < (3, 11):  # noqa: UP036
@@ -499,6 +498,118 @@ def matching_extensions(result: ScanResult, wanted: set[str], want_html: bool) -
     return choose_labels(result.by_extension(), wanted, want_html)
 
 
+# --------------------------------------------------------------------------- #
+#  robots.txt (RFC 9309)
+# --------------------------------------------------------------------------- #
+
+# A saját terméknevünk; a robots.txt csoportfejlécei ehhez illeszkednek.
+ROBOTS_TOKEN: Final = USER_AGENT.split("/")[0]
+
+
+@dataclass(frozen=True, slots=True)
+class RobotsRule:
+    """Egy Allow/Disallow sor: illeszkedési minta és a specifikusság mértéke."""
+
+    pattern: re.Pattern[str]
+    length: int          # a nyers minta hossza - ez dönt az ütköző szabályok közt
+    allow: bool
+
+
+class RobotsRules:
+    """Egy kiszolgáló robots.txt-jének ránk vonatkozó szabályai (RFC 9309).
+
+    A szabvány két ponton tér el az egyszerű, prefixes olvasattól:
+
+    * a mintában a ``*`` tetszőleges karaktersort, a záró ``$`` a cím végét
+      jelenti (§2.2.2);
+    * nem az első illeszkedő sor dönt, hanem a leghosszabb minta, és azonos
+      hossz esetén az ``Allow`` nyer (§2.2.2). Enélkül az ``Allow`` sosem tudná
+      felülírni a nála tágabb ``Disallow``-ot, azaz értelmét vesztené.
+    """
+
+    def __init__(self, rules: Iterable[RobotsRule] = ()) -> None:
+        self._rules = tuple(rules)
+
+    # -- feldolgozás ------------------------------------------------------
+    @classmethod
+    def parse(cls, text: str, token: str = ROBOTS_TOKEN) -> RobotsRules:
+        """A fájlból a ránk vonatkozó csoport szabályai.
+
+        A csoportokat a ``User-agent`` sorok nyitják; egy szabálysor után
+        következő ``User-agent`` már új csoportot kezd. Az azonos nevű
+        csoportok összeolvadnak, az ismeretlen kulcsok (Sitemap, Crawl-delay)
+        kimaradnak.
+        """
+        groups: dict[str, list[RobotsRule]] = {}
+        agents: list[str] = []      # az épp nyitott csoport fejlécei
+        in_header = True            # még a csoport fejlécénél tartunk?
+
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            key, sep, value = line.partition(":")
+            if not sep:
+                continue
+            key, value = key.strip().lower(), value.strip()
+
+            if key == "user-agent":
+                if not in_header:   # az előző csoport lezárult
+                    agents, in_header = [], True
+                if value:
+                    agents.append(value.lower())
+                    groups.setdefault(value.lower(), [])
+                continue
+
+            if key not in {"allow", "disallow"}:
+                continue
+            in_header = False
+            rule = cls._rule(value, allow=key == "allow")
+            if rule is None:        # üres vagy értelmezhetetlen minta
+                continue
+            for agent in agents:    # csoportfej nélküli szabály sehová nem tartozik
+                groups[agent].append(rule)
+
+        return cls(groups.get(cls._best_group(groups, token), ()))
+
+    @staticmethod
+    def _best_group(groups: dict[str, list[RobotsRule]], token: str) -> str:
+        """A terméknevünkre illeszkedő leghosszabb csoportnév, egyébként a "*"."""
+        token = token.lower()
+        best = ""
+        for agent in groups:
+            if agent != "*" and token.startswith(agent) and len(agent) > len(best):
+                best = agent
+        return best or "*"
+
+    @staticmethod
+    def _rule(value: str, *, allow: bool) -> RobotsRule | None:
+        """Egy szabálysor értékéből minta, vagy None, ha a sor nem szabály.
+
+        Az üres érték nem tiltás és nem is engedés, a "/" vagy "*" jellel nem
+        kezdődő útvonal pedig érvénytelen - mindkettő figyelmen kívül marad.
+        """
+        if not value or not value.startswith(("/", "*")):
+            return None
+        body, tail = (value[:-1], r"\Z") if value.endswith("$") else (value, "")
+        # A "*" mentén darabolunk, és csak a darabokat oldjuk fel: így a %2A
+        # nem válik joker jellé.
+        regex = ".*".join(re.escape(unquote(part)) for part in body.split("*"))
+        return RobotsRule(re.compile(regex + tail), len(value), allow)
+
+    # -- döntés -----------------------------------------------------------
+    def allowed(self, url: str) -> bool:
+        """Bejárható-e a cím? Ha egyik szabály sem illeszkedik, igen."""
+        parts = urlparse(url)
+        path = unquote(parts.path or "/")
+        if parts.query:
+            path += "?" + unquote(parts.query)
+        best: RobotsRule | None = None
+        for rule in self._rules:
+            if rule.pattern.match(path) and (best is None or rule.length > best.length
+                                             or (rule.length == best.length and rule.allow)):
+                best = rule
+        return best is None or best.allow
+
+
 @dataclass(slots=True)
 class ScanConfig:
     root: str
@@ -517,7 +628,7 @@ class Scanner:
         self.client = client
         self.on_log = on_log
         self.stop = stop
-        self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots: dict[str, RobotsRules] = {}
 
     # -- robots.txt ------------------------------------------------------
     def _allowed(self, url: str) -> bool:
@@ -526,19 +637,15 @@ class Scanner:
         parts = urlparse(url)
         origin = f"{parts.scheme}://{parts.netloc}"
         if origin not in self._robots:
-            parser: RobotFileParser | None = RobotFileParser()
-            assert parser is not None
+            rules = RobotsRules()          # hiányzó vagy hibás robots.txt: nincs tiltás
             try:
                 resp = self.client.get(f"{origin}/robots.txt", timeout=10.0)
                 if resp.status_code == HTTP_OK:
-                    parser.parse(resp.text.splitlines())
-                else:
-                    parser = None
+                    rules = RobotsRules.parse(resp.text)
             except httpx.HTTPError:
-                parser = None
-            self._robots[origin] = parser
-        parser = self._robots[origin]
-        return True if parser is None else parser.can_fetch(USER_AGENT, url)
+                pass
+            self._robots[origin] = rules
+        return self._robots[origin].allowed(url)
 
     @staticmethod
     def _looks_like_page(url: str) -> bool:

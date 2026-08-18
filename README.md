@@ -91,16 +91,18 @@ python tests/test_epseg.py         python tests/test_meglevo.py
 python tests/test_szalak.py        python tests/test_gui.py
 python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
-python tests/test_gui_szinkron.py
+python tests/test_gui_szinkron.py  python tests/test_robots.py
 ```
 
-Jelenlegi állás: **302 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **334 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---
 
 ## Felelős használat
 
-A program alapértelmezés szerint betartja a `robots.txt` tiltásait. A szálszámot érdemes
+A program alapértelmezés szerint betartja a `robots.txt` tiltásait, az RFC 9309
+(Robots Exclusion Protocol) szabályai szerint: a `*` és a záró `$` joker is érvényes, és
+ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer. A szálszámot érdemes
 barátságos szinten (4–8) tartani, hogy ne terheld túl a kiszolgálót. A letöltött tartalom
 felhasználására a forrásoldal feltételei vonatkoznak.

@@ -63,7 +63,10 @@ Ebben a fájlban őrződik az URL, a célkönyvtár, a kiterjesztés-szűrő, a 
 * **Szálak** – letöltés közben is állítható, azonnal hat. Csökkentéskor a futó fájlok
   befejeződnek, csak utána lép ki a fölös szál.
 * **Meglévő fájl** – *kihagyás* / *méret-ellenőrzés* (alapértelmezett) / *újratöltés*.
-* **robots.txt betartása** – ajánlott bekapcsolva hagyni.
+* **robots.txt betartása** – ajánlott bekapcsolva hagyni. A szabályokat az RFC 9309
+  szerint értelmezi: a `*` és a záró `$` joker is érvényes, ütközéskor a leghosszabb minta
+  dönt, azonos hossznál pedig az `Allow` – így az `Allow` felül tudja írni a tágabb
+  `Disallow`-ot.
 
 ## Megszakítás és folytatás
 
@@ -88,7 +91,7 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
 python test_letolto.py      python test_valogatas.py    python test_meglevo.py
 python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
-python test_gui_valogatas.py                            python test_gui_szinkron.py
+python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi
