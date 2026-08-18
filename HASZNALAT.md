@@ -46,7 +46,7 @@ A **Talált kiterjesztések** panel és a **Kiterjesztések** mező mindig egybe
 * ha a mezőbe írsz vagy a HTML-kapcsolót állítod, a panelen igazodnak a pipák (és velük a
   fájllista kijelölése is) – a gépelés után kis szünettel, hogy ne kapkodjon minden leütésre;
 * ha semmi sincs kipipálva, a mezőben `(egyik sem)` látszik, mert az üres mező „minden
-  kiterjesztést" jelentene;
+  kiterjesztést" jelentene; a mezőt üresre törölve rögtön vissza is kapod a „mindent";
 * a kiterjesztés nélküli csoport neve `(nincs kiterjesztés)`, ez így is írható a mezőbe.
 
 ### Beállítások mappája

@@ -55,11 +55,16 @@ def checked():
 
 def selected_labels():
     """Amelyik cimkehez tartozo fajlokbol legalabb egy ki van jelolve."""
-    return {i.label for i in app.manager.items.values() if i.selected}
+    return {letolto.item_label(i) for i in app.manager.items.values() if i.selected}
 
 
 print("--- A) Beállítások mappája gomb ---")
 check("a gomb létrejött", app.b_settings.cget("text") == "Beállítások mappája")
+app.update()
+_bar = app.b_settings.master
+check("a gombsor a legkisebb ablakméretben is kifér",
+      _bar.winfo_reqwidth() <= app.minsize()[0],
+      f"{_bar.winfo_reqwidth()} px / {app.minsize()[0]} px")
 check("a beállításfájl még nincs meg", not SETTINGS.exists())
 app._open_settings_dir()
 pump(0.2)
@@ -67,6 +72,22 @@ check("a mappa létrejött", SETTINGS.parent.is_dir())
 check("a beállításfájl is elkészült, hogy legyen mit megnézni", SETTINGS.is_file())
 check("megnyílt a fájlkezelő a beállítások mappájával",
       opened and opened[-1][1] == SETTINGS.parent, str(opened))
+check("a beállításfájl olvasható JSON", "url" in letolto.json.loads(
+    SETTINGS.read_text(encoding="utf-8")))
+
+errors = []
+from tkinter import messagebox as tk_messagebox     # a GUI ugyanezt a modult használja
+real_showerror = tk_messagebox.showerror
+tk_messagebox.showerror = lambda *a, **k: errors.append(a)
+blocker = TMP / "utban.txt"
+blocker.write_text("x", encoding="utf-8")
+letolto.SETTINGS_FILE = blocker / "beallitasok" / "b.json"     # a szülő egy fájl
+try:
+    app._open_settings_dir()
+finally:
+    letolto.SETTINGS_FILE = SETTINGS
+    tk_messagebox.showerror = real_showerror
+check("elérhetetlen mappánál hibaüzenet jön, nem összeomlás", len(errors) == 1, str(errors))
 
 print("\n--- Átvizsgálás ---")
 app.v_url.set(BASE)
@@ -166,7 +187,109 @@ pump(8)
 check("átvizsgálás után is csak a png van kipipálva", checked() == ["png"], str(checked()))
 check("a mező a beírt maradt", app.v_ext.get() == "png", app.v_ext.get())
 
+print("\n--- J) gyors gépelés: nem fut minden leütésre ---")
+runs = {"n": 0}
+real_apply = app._apply_ext_filter
+
+
+def counting_apply():
+    runs["n"] += 1
+    real_apply()
+
+
+app._apply_ext_filter = counting_apply
+for text in ("p", "pn", "png", "png,", "png,t", "png,tx", "png,txt"):
+    app.v_ext.set(text)
+    app.update()
+pump(1.2)
+check("hét leütésből egyetlen igazítás lett", runs["n"] == 1, str(runs["n"]))
+check("a végállapot a helyes", set(checked()) == {"png", "txt"}, str(checked()))
+app._apply_ext_filter = real_apply
+
+print("\n--- K) értelmetlen bevitel ---")
+app.v_ext.set(" , ,, ")
+pump(1.0)
+check("csupa elválasztó = üres kérés = minden",
+      set(checked()) == set(names) - {letolto.HTML_LABEL}, str(checked()))
+app.v_ext.set("nincsilyen")
+pump(1.0)
+check("ismeretlen kiterjesztésre nem marad pipa", checked() == [], str(checked()))
+check("a beírt szöveget nem írja felül", app.v_ext.get() == "nincsilyen", app.v_ext.get())
+
+print("\n--- L) korábbi állapot betöltése után is működik ---")
+STATE_DIR = TMP / "betoltes"
+shutil.rmtree(STATE_DIR, ignore_errors=True)
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+store = letolto.StateStore(STATE_DIR)
+store.save({
+    "http://x/a.pdf": letolto.Item(url="http://x/a.pdf", path="a.pdf", label="pdf"),
+    "http://x/b.png": letolto.Item(url="http://x/b.png", path="b.png", label="png",
+                                   selected=False),
+    # Régi állapotfájl: még címke nélkül mentve - a címből kell kitalálni.
+    "http://x/c.txt": letolto.Item(url="http://x/c.txt", path="c.txt"),
+}, force=True)
+app.v_dir.set(str(STATE_DIR))
+app.v_ext.set("")
+pump(2.0)                      # az automatikus felismerés is elsül
+check("a betöltött elemek megjelentek", len(app.manager.items) == 3,
+      str(len(app.manager.items)))
+check("a panel átvizsgálás nélkül is feltöltődött",
+      set(app._ext_vars) == {"pdf", "png", "txt"}, str(list(app._ext_vars)))
+check("a pipák az elemek állapotát mutatják", set(checked()) == {"pdf", "txt"}, str(checked()))
+app.v_ext.set("png")
+pump(1.0)
+check("betöltött állapotnál is hat a mező", checked() == ["png"], str(checked()))
+check("a címke nélküli régi elem is követi (címből pótolt címke)",
+      selected_labels() == {"png"}, str(selected_labels()))
+app.v_ext.set("txt")
+pump(1.0)
+check("a címke nélküli elem kijelölhető", selected_labels() == {"txt"}, str(selected_labels()))
+
+print("\n--- M) nagy lista: egy végigjárás, csak a változó sorok ---")
+import time as _time
+import tracemalloc
+
+BIG = TMP / "nagy"
+shutil.rmtree(BIG, ignore_errors=True)
+big = letolto.DownloadManager(BIG, 1, on_event=lambda *_a: None)
+suffixes = ["pdf", "png", "txt", "bin", "zip", "html"]
+urls = [f"http://n/{i}/f{i}.{suffixes[i % len(suffixes)]}" for i in range(20000)]
+big.add_urls(urls, labels={u: u.rsplit(".", 1)[1] for u in urls})
+app.manager = big
+drawn = {"n": 0}
+real_queue, real_flush = app._queue_row, app._flush_rows
+app._queue_row = lambda item: drawn.__setitem__("n", drawn["n"] + 1)
+app._flush_rows = lambda: None
+try:
+    tracemalloc.start()
+    start = _time.perf_counter()
+    app._apply_ext_selection({"pdf": False, "png": False})
+    first = _time.perf_counter() - start
+    _cur, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    changed_first, drawn["n"] = drawn["n"], 0
+    start = _time.perf_counter()
+    app._apply_ext_selection({"pdf": False, "png": False})     # ugyanaz még egyszer
+    second = _time.perf_counter() - start
+    changed_second = drawn["n"]
+finally:
+    app._queue_row, app._flush_rows = real_queue, real_flush
+print(f"    20 000 elem: első kör {first * 1000:.0f} ms, második {second * 1000:.0f} ms, "
+      f"csúcsmemória {peak / 1024:.0f} KB")
+expected = sum(1 for u in urls if u.rsplit(".", 1)[1] in ("pdf", "png"))
+check("csak az érintett sorok rajzolódnak újra", changed_first == expected,
+      f"{changed_first} / {expected}")
+check("változatlan állapotnál egyetlen sor sem", changed_second == 0, str(changed_second))
+check("20 000 elem is fél másodpercen belül", first < 0.5, f"{first:.3f}s")
+check("a memóriaigény a változó elemekkel arányos (< 1 MB)", peak < 1_000_000, f"{peak} B")
+big.close()
+app.manager = None
+
+print("\n--- N) bezárás függő időzítővel ---")
+app.v_ext.set("pdf,zip")            # időzítő ütemezve, de nem futott le
+check("van függő időzítő", app._ext_filter_job is not None)
 app._on_close()
+check("bezáráskor leáll", app._ext_filter_job is None)
 print("\n=== GUI SZINKRON OSSZEGZES: %d / %d ===" % (sum(R), len(R)))
 srv.shutdown()
 sys.exit(0 if all(R) else 1)

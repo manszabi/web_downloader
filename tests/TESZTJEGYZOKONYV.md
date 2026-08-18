@@ -73,19 +73,19 @@ Ez a 12-szeres megszakításos teszten mérhető: a részfájl körönként nő
 ## 5. Végleges tesztek
 
 ```
+GUI-szinkron, beállítások (test_gui_szinkron)  53 / 53
+Válogatás, kiterjesztések (test_valogatas.py)  48 / 48
+Windows-specifikus ellenőrzések (test_windows)  43 / 43
 Funkcionális teszt (test_letolto.py)            30 / 30
 Épség és felülírás (test_epseg.py, Xvfb)       28 / 28
-Válogatás, kiterjesztések (test_valogatas.py)  25 / 25
 GUI-válogatás (test_gui_valogatas.py, Xvfb)    19 / 19
-GUI-szinkron, beállítások (test_gui_szinkron)  33 / 33
 Élő szálszám-változtatás (test_szalak.py)      18 / 18
 Meglévő fájlok (test_meglevo.py)               16 / 16
 GUI végponttól végpontig (test_gui.py, Xvfb)   15 / 15
 Terhelés és összeomlás (test_terheles.py)      14 / 14
 Összeomlás utáni folytatás (test_osszeomlas)   10 / 10
-Windows-specifikus ellenőrzések (test_windows)  34 / 34
 -------------------------------------------------------
-Összesen                                      242 / 242
+Összesen                                      294 / 294
 ruff (E,F,W,B,UP,SIM,C4,RUF,PL)        All checks passed
 mypy                                   Success: no issues found
 ```
@@ -136,6 +136,25 @@ Végponttól végpontig futó ellenőrzés valós letöltéssel, Windows-ellenes
 127.0.0.1_8802/w/hosszu...hos_a2324068.dat  <- 150 karakteres név
 PROBLEMAK: nincs
 ```
+
+## 5/b. A kiterjesztés-szinkron és a beállítás-gomb felülvizsgálata
+
+A két új funkció (kétirányú kiterjesztés-szinkron, „Beállítások mappája" gomb) átnézésekor
+talált és javított hibák:
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 20 | Az Intéző hívása listás `Popen(["explorer", "/select,..."])` alakban | A `list2cmdline` a *teljes* paramétert idézőjelbe teszi, ha az útvonalban szóköz van (`explorer "/select,C:\Users\Kis Béla\..."`). Az Intéző ezt nem érti: **nem a fájlt jelöli ki, hanem a Dokumentumok mappát nyitja meg.** Márpedig a `%APPDATA%` úton a magyar felhasználónevek jó része szóközös | `subprocess.list2cmdline` kimenete; a jelenség a Microsoft/WSL #7603 és a click #2994 hibajegyben is dokumentált. Javítás: egyetlen parancssztring, az idézőjel a `/select,` **után** |
+| 21 | Az `explorer` név szerint indult | A `CreateProcess` `lpApplicationName=NULL` mellett a **futó folyamat munkakönyvtárát** is végignézi a rendszerkönyvtár előtt - egy letöltött, odakerült `explorer.exe` indulhatna el helyette. Egy letöltőprogramnál ez nem elméleti | a CreateProcess keresési sorrendje. Javítás: `%WINDIR%\explorer.exe` teljes úttal, idézőjelben |
+| 22 | A mező vesszővel tagol, a kiterjesztés-címke viszont tartalmazhat vesszőt (`adat.2024,csv` → `2024,csv`) | A panelről a mezőbe írva a címke két hamis kiterjesztésre esett volna szét, és a következő igazításkor **magától lekerült volna a pipa** a fájlokról | `ext_label("http://a/b/adat.2024,csv") == "2024,csv"`. Javítás: az ilyen címkét a mező nem írja le és nem is veszi el (`text_representable`) |
+| 23 | „Korábbi állapot" betöltése után a kiterjesztés-panel üres maradt | A betöltött fájlokra a csoportos pipálás és - az új szinkron miatt - a kézi mező sem hatott: a felhasználó azt látta, hogy a beírt szűrő nem csinál semmit | teszt: 3 elemű állapotfájl betöltése után 0 elem a panelen. Javítás: a panel a betöltött elemekből is felépül |
+| 24 | Régi állapotfájlban nincs `label` mező | A címke nélküli elemekre semelyik kiterjesztés-pipa nem hatott (üres címkéhez nincs jelölőnégyzet) | teszt: `Item(url=".../regi.pdf")` címke nélkül. Javítás: `item_label()` a címből pótolja |
+| 25 | Egy pipa átállítása kiterjesztésenként végigjárta a teljes listát, és **minden** sorát újrarajzolta | 20 000 elemnél a hat címke állítgatása hatszoros végigjárás és 120 000 fölösleges sorfrissítés a táblázatban | mérés: 20 000 elem, két címke levétele **21 ms** egyetlen végigjárással, és csak a ténylegesen változó 6 668 sor rajzolódik újra; változatlan állapotnál **egy sor sem** (2 ms). Csúcsmemória 0,7 MB |
+| 26 | Az épség-ellenőrzés végén a **teljes** lista újrarajzolódott | Ugyanez a fölösleges munka minden átvizsgálás után; ráadásul a kipipált címkék halmaza sérült fájlonként újraszámolódott | kódelemzés. Javítás: csak az ellenőrzött elemek sorai frissülnek, a címkehalmaz egyszer készül el |
+
+Az „egyik sem" állapot jelölése (`(egyik sem)`) azért kellett, mert az üres mező a program
+eredeti szabálya szerint „minden kiterjesztést" jelent - enélkül az „Egyik sem" gomb után egy
+újabb átvizsgálás mindent visszapipált volna.
 
 ## 6. Mit tud most, amit korábban nem
 

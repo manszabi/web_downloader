@@ -242,6 +242,56 @@ check("Windowson az %APPDATA% alá kerül", 'os.environ.get("APPDATA")' in src_t
 check("máshol a home könyvtárba", '.letolto_beallitasok.json' in src_txt)
 print("    ezen a gépen:", letolto.SETTINGS_FILE)
 
+# --------------------------------------------------- 8/b. Intezo-ablak a beallitasokra
+print("\n--- 8/b. „Beállítások mappája” gomb Windows-parancsa ---")
+from pathlib import PureWindowsPath
+
+real_windir = os.environ.get("WINDIR")
+os.environ["WINDIR"] = "C:\\Windows"
+spaced = PureWindowsPath(r"C:\Users\Kis Béla\AppData\Roaming\PyLetolto\beallitasok.json")
+cmd = letolto.explorer_select_command(spaced)
+print("   ", cmd)
+check("az idézőjel a /select, UTÁN áll (különben a Dokumentumokat nyitná meg)",
+      '/select,"C:\\Users\\Kis Béla\\' in cmd, cmd)
+check("nem az egész paraméter van idézőjelben", '"/select,' not in cmd, cmd)
+check("az explorer.exe teljes úttal indul (nem a munkakönyvtárból)",
+      cmd.startswith('"C:\\Windows\\explorer.exe"'), cmd)
+os.environ["WINDIR"] = "D:\\Win\\"
+check("a %WINDIR% záró jelét is kezeli",
+      letolto.explorer_select_command(PureWindowsPath(r"C:\a\b.json")).startswith(
+          '"D:\\Win\\explorer.exe"'), letolto.explorer_select_command(PureWindowsPath("C:/a")))
+del os.environ["WINDIR"]
+check("%WINDIR% nélkül is épkézláb parancs",
+      letolto.explorer_select_command(PureWindowsPath(r"C:\a\b.json")).startswith(
+          '"C:\\Windows\\explorer.exe"'))
+if real_windir is not None:
+    os.environ["WINDIR"] = real_windir
+
+# A tenyleges inditas: Windowson egyetlen sztringkent kell atadni (nincs cmd.exe).
+TMP.mkdir(parents=True, exist_ok=True)
+probe = TMP / "beallitasok.json"
+probe.write_text("{}", encoding="utf-8")
+launched = []
+real_popen = subprocess.Popen
+opened_dirs = []
+real_open = letolto.open_in_file_manager
+subprocess.Popen = lambda *a, **k: launched.append((a, k))
+letolto.open_in_file_manager = lambda path: opened_dirs.append(Path(path))
+try:
+    letolto.sys.platform = "win32"
+    letolto.reveal_in_file_manager(probe)
+    letolto.reveal_in_file_manager(TMP / "nincs_ilyen.json")     # hiányzó fájl
+finally:
+    letolto.sys.platform = real_platform
+    subprocess.Popen = real_popen
+    letolto.open_in_file_manager = real_open
+check("meglévő fájlnál elindítja az Intézőt", len(launched) == 1, str(launched))
+check("egyetlen sztringként adja át (a lista alak elrontaná az idézőjeleket)",
+      launched and isinstance(launched[0][0][0], str), str(launched[:1]))
+check("shell nélkül indul", launched and not launched[0][1].get("shell"), str(launched[:1]))
+check("hiányzó fájlnál a mappát nyitja meg",
+      opened_dirs == [TMP], str(opened_dirs))
+
 # --------------------------------------------------------------- 9. bat fajl
 print("\n--- 9. Az indito .bat ellenőrzése ---")
 bat = repo_file("inditas.bat")

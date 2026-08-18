@@ -93,7 +93,7 @@ python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py
 ```
 
-Jelenlegi állás: **242 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **294 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---

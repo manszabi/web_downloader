@@ -37,7 +37,7 @@ from dataclasses import field as dataclass_field
 from enum import StrEnum
 from hashlib import blake2b
 from html.parser import HTMLParser
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -301,17 +301,34 @@ def open_in_file_manager(path: Path) -> None:
         log.warning("A mappa megnyitása nem sikerült: %s", exc)
 
 
+def explorer_select_command(path: Path) -> str:
+    """Az Intéző parancssora, amellyel a fájlra állva nyílik meg egy új ablak.
+
+    Két buktatót kerül meg:
+
+    * Az idézőjel csakis a `/select,` *után* jó. A listás Popen-alak a szóközös
+      úton (pl. ``C:\\Users\\Kis Béla\\...``) az egész paramétert idézőjelbe tenné
+      (``explorer "/select,C:\\..."``), amitől az Intéző nem a kért fájlt jelöli
+      ki, hanem a Dokumentumok mappát nyitja meg.
+    * Az explorer.exe teljes úttal indul: név szerint hívva a CreateProcess a
+      *futó folyamat aktuális könyvtárát* is végignézi, így egy letöltött,
+      odakerült explorer.exe indulhatna el helyette.
+    """
+    explorer = PureWindowsPath(os.environ.get("WINDIR", "C:\\Windows"), "explorer.exe")
+    return f'"{explorer}" /select,"{path}"'
+
+
 def reveal_in_file_manager(path: Path) -> None:
     """Egy fájl megmutatása a fájlkezelőben, lehetőleg kijelölve.
 
-    Windowson az Intéző /select kapcsolója nyit új ablakot a fájlra állva;
-    ha a fájl még nincs meg, a mappáját nyitjuk meg.
+    Ha a fájl még nincs meg, vagy a rendszer nem tud kijelölni, a mappáját nyitjuk meg.
     """
     if path.is_file():
         try:
             if sys.platform == "win32":
-                # A /select után szóköz nélkül, egy paraméterként kell az útvonal.
-                subprocess.Popen(["explorer", f"/select,{path}"])
+                # Egyetlen sztringként adjuk át: a CreateProcess pontosan ezt kapja,
+                # nem fut se cmd.exe, se shell, ami újraértelmezné az idézőjeleket.
+                subprocess.Popen(explorer_select_command(path))
                 return
             if sys.platform == "darwin":
                 subprocess.Popen(["open", "-R", str(path)])
@@ -393,6 +410,12 @@ def ext_label(url: str, is_page: bool = False) -> str:
     return ext or NO_EXT_LABEL
 
 
+def item_label(item: Item) -> str:
+    """Egy elem kiterjesztés-címkéje. Régi állapotfájlban még nem volt eltárolva,
+    ilyenkor a címből képezzük, hogy a szűrés akkor is működjön."""
+    return item.label or ext_label(item.url)
+
+
 @dataclass(slots=True)
 class ScanResult:
     """Az átvizsgálás nyers eredménye: minden megtalált cím, szűrés nélkül."""
@@ -434,13 +457,23 @@ def choose_labels(labels: Iterable[str], wanted: set[str], want_html: bool) -> s
     return chosen & known
 
 
+def text_representable(label: str) -> bool:
+    """Kifejezhető-e a címke a vesszővel tagolt mezőben?
+
+    A vesszőt tartalmazó utótag (pl. a "fajl.a,b" címéből képzett "a,b") nem az:
+    a mező két külön kiterjesztésnek olvasná. Az ilyen ritka címkét ezért csak a
+    saját jelölőnégyzete vezérli, a mező nem ír bele és nem is veszi el.
+    """
+    return "," not in label
+
+
 def ext_filter_text(labels: Iterable[str]) -> str:
     """A kipipált címkékből a mezőbe illő szöveg - mintha kézzel írták volna be.
 
     A HTML-t külön jelölőnégyzet kezeli, ezért kimarad. Ha semmi sincs
     kipipálva, jelezni kell: az üres mező ugyanis "minden kiterjesztést" jelent.
     """
-    picked = [lab for lab in labels if lab != HTML_LABEL]
+    picked = [lab for lab in labels if lab != HTML_LABEL and text_representable(lab)]
     return ", ".join(picked) if picked else NONE_TOKEN
 
 
@@ -1721,12 +1754,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                     if isinstance(payload, Item):
                         self._queue_row(payload)
                 case "added" | "reset":
-                    if kind == "reset":
-                        self.tree.delete(*self.tree.get_children())
-                        self._known_rows.clear()
-                    if isinstance(payload, list):
-                        for item in payload:
-                            self._queue_row(item)
+                    self._on_items_batch(payload if isinstance(payload, list) else [],
+                                         reset=kind == "reset")
                 case "scanned":
                     if isinstance(payload, ScanResult):
                         self._on_scanned(payload)
@@ -1735,6 +1764,17 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                         self._on_verified(payload)
                 case "finished":
                     self._on_finished()
+
+        def _on_items_batch(self, items: list[Item], *, reset: bool) -> None:
+            """Elemek kötegelt megjelenítése: betöltés (reset) vagy új találatok (added)."""
+            if reset:
+                self.tree.delete(*self.tree.get_children())
+                self._known_rows.clear()
+            for item in items:
+                self._queue_row(item)
+            if reset and items:
+                # Betöltött állapotnál is legyen mit pipálni a kiterjesztés-panelen.
+                self._rebuild_panel_from_items()
 
         def _queue_row(self, item: Item) -> None:
             self._pending_rows[item.url] = (
@@ -1819,17 +1859,51 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 ).grid(row=index // EXT_COLUMNS, column=index % EXT_COLUMNS,
                        sticky="w", padx=6, pady=1)
 
-        def _on_extension_toggled(self, name: str) -> None:
-            """Egy kiterjesztés ki/be pipálása az összes hozzá tartozó fájlra hat."""
-            value = self._ext_vars[name].get()
-            self._sync_ext_text()
+        def _apply_ext_selection(self, changes: dict[str, bool]) -> None:
+            """Több kiterjesztés kijelölésének érvényesítése egyetlen végigjárással.
+
+            A listát csak egyszer nézzük végig, és csak a ténylegesen változó
+            sorokat rajzoljuk újra - húszezer elemnél ez a különbség érezhető.
+            """
+            manager = self.manager
+            if manager is None or not changes:
+                return
+            buckets: dict[bool, list[str]] = {True: [], False: []}
+            for item in manager.items.values():
+                value = changes.get(item_label(item))
+                if value is not None and item.selected != value:
+                    buckets[value].append(item.url)
+            for value, urls in buckets.items():
+                if not urls:
+                    continue
+                manager.set_selected(urls, value)
+                for url in urls:
+                    self._queue_row(manager.items[url])
+            self._flush_rows()               # üres sorlistánál magától visszatér
+
+        def _rebuild_panel_from_items(self) -> None:
+            """A kiterjesztés-panel feltöltése a már ismert elemekből.
+
+            Korábbi állapot betöltése után nincs átvizsgálás, a panel mégse
+            maradjon üres: a címkék az elemekből is kiolvashatók.
+            """
             if self.manager is None:
                 return
-            urls = [i.url for i in self.manager.items.values() if i.label == name]
-            self.manager.set_selected(urls, value)
-            for url in urls:
-                self._queue_row(self.manager.items[url])
-            self._flush_rows()
+            groups: dict[str, list[str]] = {}
+            checked: set[str] = set()
+            for item in self.manager.items.values():
+                name = item_label(item)
+                groups.setdefault(name, []).append(item.url)
+                if item.selected:
+                    checked.add(name)
+            ordered = dict(sorted(groups.items(),
+                                  key=lambda kv: (kv[0] == NO_EXT_LABEL, kv[0])))
+            self._rebuild_extension_panel(ordered, checked)
+
+        def _on_extension_toggled(self, name: str) -> None:
+            """Egy kiterjesztés ki/be pipálása az összes hozzá tartozó fájlra hat."""
+            self._sync_ext_text()
+            self._apply_ext_selection({name: self._ext_vars[name].get()})
 
         def _set_all_extensions(self, value: bool) -> None:
             if not self._ext_vars:
@@ -1837,12 +1911,12 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 return
             self._ext_sync = True                # egyszerre állítunk mindent, utána írjuk a mezőt
             try:
-                for name, var in self._ext_vars.items():
+                for var in self._ext_vars.values():
                     var.set(value)
-                    self._on_extension_toggled(name)
             finally:
                 self._ext_sync = False
             self._sync_ext_text()
+            self._apply_ext_selection(dict.fromkeys(self._ext_vars, value))
 
         # -- a panel és a Kiterjesztések mező összehangolása ---------------
         def _sync_ext_text(self) -> None:
@@ -1877,15 +1951,20 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 want_html = self.v_html.get()
             except tk.TclError:                  # félkész érték a változóban
                 return
-            chosen = choose_labels(self._ext_vars, parse_ext_filter(self.v_ext.get()), want_html)
+            chosen = choose_labels(self._ext_vars.keys(),
+                                   parse_ext_filter(self.v_ext.get()), want_html)
+            changes: dict[str, bool] = {}
             self._ext_sync = True                # a pipák állítása ne írja vissza a mezőt
             try:
                 for name, var in self._ext_vars.items():
+                    if not text_representable(name):     # a mező nem tud róla, ne is nyúljon hozzá
+                        continue
                     if var.get() != (name in chosen):
                         var.set(name in chosen)
-                        self._on_extension_toggled(name)
+                        changes[name] = name in chosen
             finally:
                 self._ext_sync = False
+            self._apply_ext_selection(changes)
 
         def _on_scanned(self, result: ScanResult) -> None:
             self.scanning = False
@@ -1946,15 +2025,18 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 item = manager.items.get(url)
                 if item is not None:
                     manager.mark_intact(item)
+            wanted = self._checked_labels()      # egyszer, ne körönként újra
             for url in broken:
                 item = manager.items.get(url)
-                if item is not None and item.label in self._checked_labels():
+                if item is not None and item_label(item) in wanted:
                     item.selected = True        # sérült: újra kell tölteni
                     item.status = Status.PENDING
                     item.done = 0
             manager._recount()                  # az összesítő a pipákhoz igazodik
-            for item in manager.items.values():
-                self._queue_row(item)
+            for url in (*intact, *broken):      # csak az érintett sorok rajzolódnak újra
+                item = manager.items.get(url)
+                if item is not None:
+                    self._queue_row(item)
             self._flush_rows()
             waiting = len(manager.pending())
             if intact or broken:

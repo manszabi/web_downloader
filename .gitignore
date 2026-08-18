@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# A program futás közben keletkező fájljai
+_letoltes_allapot.json
+*.part
