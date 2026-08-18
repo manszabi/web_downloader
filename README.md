@@ -24,6 +24,22 @@ python letolto.py
 
 Python **3.11** vagy újabb szükséges.
 
+### Telepítés parancsként (nem kötelező)
+
+Ha nem a repóból akarod indítani, telepíthető is – ekkor a `letolto` parancs bárhonnan
+elérhető lesz (a `letolto-gui` Windowson konzolablak nélkül indul):
+
+```bash
+pipx install .          # vagy: pip install .
+letolto --no-gui -o ./letoltesek https://pelda.hu
+```
+
+Fejlesztéshez a lint, a típusellenőrzés és a tesztek egy lépésben:
+
+```bash
+pip install -e ".[fejlesztes]"
+```
+
 ---
 
 ## Mit tud
@@ -78,6 +94,7 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 | `letolto_gui.py` | a grafikus felület (tkinter); a mag lustán importálja, csak GUI módban |
 | `inditas.bat` | Windows-indító, függőség-ellenőrzéssel |
 | `HASZNALAT.md` | rövid használati útmutató |
+| `pyproject.toml` | csomagleírás: ebből lesz a telepíthető `letolto` parancs |
 | `ruff.toml` | a lint rögzített beállításai (a program futtatásához nem kell) |
 | `tests/` | tesztek és a hozzájuk tartozó helyi kiszolgáló (a futtatáshoz nem kellenek) |
 | `tests/TESZTJEGYZOKONYV.md` | a fejlesztés során talált hibák, mérések, ismert korlátok |
