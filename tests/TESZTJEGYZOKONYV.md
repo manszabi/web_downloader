@@ -119,7 +119,7 @@ Minden ellenőrzés a `test_windows.py`-ban fut, Linuxon is, a Windows-szabályo
 
 | Terület | Mit csinál a program |
 |---|---|
-| Foglalt eszköznevek | `CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9` – kiterjesztéssel együtt is (`CON.txt` -> `_CON.txt`). A Python 3.13+ `os.path.isreserved()` ellenőrzésével is egyeztetve. |
+| Foglalt eszköznevek | `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0-9`, `LPT0-9` (a `¹²³` jelekkel együtt) – kiterjesztéssel és a pont előtti szóközzel együtt is (`CON.txt` és `CON .txt` -> `_CON.txt`, `_CON .txt`). A CPython `ntpath.isreserved()` ellenőrzésével egyeztetve, ami Linuxon is futtatható. |
 | Tiltott karakterek | `< > : " / \ | ? *` és a vezérlőkarakterek cseréje; záró pont és szóköz levágása (a Windows némán levágná, és eltérő nevet kapnál) |
 | MAX_PATH (260) | A **teljes** út (célkönyvtár + relatív út) 240 karakter alatt marad; szükség esetén rövidít és rövid jelet fűz a névhez, a kiterjesztést megtartva. Ugyanígy viselkedik Linuxon is, hogy a mappa átvihető legyen. |
 | Kis-/nagybetű | A névütközést kis-nagybetűre érzéketlenül vizsgálja, mert az NTFS sem tesz köztük különbséget |
@@ -245,3 +245,31 @@ eredeti szabálya szerint „minden kiterjesztést" jelent - enélkül az „Egy
 * Csak HTTP/1.1 (a HTTP/2 többszálú, streamelt letöltésnél a httpx-nél ismert kockázat).
 * JavaScripttel betöltött tartalmat nem lát – ehhez böngészőmotor kellene.
 * A robots.txt `Crawl-delay` direktíváját nem veszi figyelembe, csak a tiltásokat.
+* A DPI-kezelés `PROCESS_SYSTEM_DPI_AWARE`: a program indulásakor érvényes nagyítással
+  számol. Eltérő nagyítású monitorok között áthúzva a felület a Windows képnagyításától
+  lesz enyhén elmosódott, amíg újra nem indul. A per-monitor v2 mód élesebb lenne, de a Tk
+  nem tud futás közben átméretezni, így ott a felület maradna a régi méretben – ezért
+  maradt a rendszerszintű mód.
+
+## 9. A robots.txt, a napló és a felülvizsgálat (2026-08)
+
+Az RFC 9309 szerinti robots.txt-kezelés és a naplófájl bevezetése közben talált hibák:
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 20 | A `RobotFileParser` az **első** illeszkedő sort alkalmazta, prefix-egyezéssel | Az `Allow` sosem tudta felülírni a nála tágabb `Disallow`-ot (`Disallow: /admin/` + `Allow: /admin/nyilvanos` mellett a kivétel is tiltva maradt), a `*` és a záró `$` joker pedig egyáltalán nem működött | `RobotsRules` teszt: a stdlib TILTVA-t adott arra, amit az RFC §2.2.2 enged |
+| 21 | Az elérhetetlen `robots.txt` (5xx) ugyanúgy „nincs tiltás"-t jelentett, mint a 404 | Az RFC §2.3.1.4 szerint a kettő nem ugyanaz: az 5xx azt jelenti, hogy *nem tudjuk*, mi a szabály | RFC 9309 §2.3.1.4; új kapcsoló + 3 újrapróbálkozás |
+| 22 | A `robots.txt` teljes törzse a memóriába került (`resp.text`) | Ugyanaz a hibaosztály, amit az 1. pontban a HTML-lapoknál már kijavítottunk: egy végtelen válasz elvitte volna a memóriát | teszt: 512 KiB fölötti fájl, a levágott fél sor nem válik szabállyá |
+| 23 | A `log.warning(...)` üzenetek sehol nem hagytak nyomot GUI módban | „A mappa megnyitása nem sikerült", „Állapot mentése sikertelen" – pont a hibák vesztek el | a rotáló kezelő most a `letolto` naplózóra is felkerül |
+| 24 | `"CON .txt"` (szóköz a pont előtt) nem lett átnevezve | Windowson ez is a CON eszközt jelenti, a fájl **nem hozható létre** – a letöltés hibára futott volna | `ntpath.isreserved("CON .txt")` = True, a miénk hamisat adott |
+| 25 | A `CONIN$`, `CONOUT$`, `COM0`, `LPT0` nevek hiányoztak a listánkról | ugyanaz | a CPython `ntpath._reserved_names` és a Microsoft „Naming a File" dokumentációja |
+| 26 | `MAX_ABS_PATH` és `_MAX_PATH`: két név ugyanarra az értékre, de más jelentéssel (teljes út / relatív út) | Félreolvasható kód; a „visszafelé kompatibilis név" megjegyzés ellenére semmi nem használta kívülről | átnevezve `MAX_REL_PATH`-ra |
+
+A felület oldalán: a *robots.txt betartása* kikapcsolása most kiszürkíti az *5xx hibánál leáll*
+jelölőnégyzetet, mert kikapcsolt `robots.txt` mellett a program le sem kéri a fájlt. A GUI-teszt
+(`test_gui_robots.py`) a jelölőnégyzet helyét, láthatóságát és a szomszédjától mért távolságát is
+ellenőrzi, nem csak a viselkedését.
+
+Az egész csomagra 410 teszt fut (ebből 60 a robots.txt, 29 a napló, 19 az új GUI-kapcsoló),
+mind sikeres; a `test_robots.py` végponttól végpontig, valódi HTTP-kiszolgálóval is ellenőrzi
+az `Allow` felülírást és az 5xx-viselkedést.

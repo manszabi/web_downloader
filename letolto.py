@@ -112,15 +112,18 @@ SPEED_WINDOW: Final = 0.5          # sebességmérés legrövidebb ablaka
 LOG_MAX_LINES: Final = 500
 
 # Windows-on foglalt eszköznevek (Microsoft: Naming Files, Paths, and Namespaces)
+# A DOS-korból örökölt eszköznevek. A Microsoft dokumentációja a COM0/LPT0 nevet is
+# idesorolja, a ¹²³ jeleket pedig számjegynek veszi a Windows; a CONIN$/CONOUT$ a
+# konzol két félkész eszköze (a CPython ntpath.isreserved is számol velük).
 _WIN_RESERVED: Final = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{d}" for d in "123456789¹²³"}
-    | {f"LPT{d}" for d in "123456789¹²³"}
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"COM{d}" for d in "0123456789¹²³"}
+    | {f"LPT{d}" for d in "0123456789¹²³"}
 )
 _ILLEGAL_CHARS: Final = re.compile(r'[<>:"|?*\\/\x00-\x1f]')
 _MAX_COMPONENT: Final = 100            # egy útvonalelem max hossza
-MAX_ABS_PATH: Final = 240              # a Windows MAX_PATH (260) alatt maradunk
-_MAX_PATH: Final = 240                 # visszafelé kompatibilis név
+MAX_ABS_PATH: Final = 240              # a teljes út korlátja: a Windows MAX_PATH (260) alatt
+MAX_REL_PATH: Final = 240              # a célkönyvtáron belüli út ennél hosszabban lapul
 
 
 class Status(StrEnum):
@@ -275,7 +278,9 @@ def human_time(sec: float | None) -> str:
 
 
 def _stem(name: str) -> str:
-    return name.partition(".")[0].upper()
+    """A név eszköznév-része. A "CON .txt" is a CON eszközt jelenti Windowson,
+    ezért a pont előtti szóközöket le kell vágni."""
+    return name.partition(".")[0].rstrip(" ").upper()
 
 
 def safe_component(raw: str) -> str:
@@ -310,7 +315,7 @@ def url_to_relpath(url: str) -> Path:
         tag = _short_hash(parts.query)
         segments[-1] = f"{root}_{tag}.{ext}" if dot else f"{segments[-1]}_{tag}"
     rel = Path(safe_component(parts.netloc), *segments)
-    if len(str(rel)) > _MAX_PATH:                 # túl hosszú út lapítása
+    if len(str(rel)) > MAX_REL_PATH:              # túl hosszú út lapítása
         rel = Path(safe_component(parts.netloc),
                    f"{_short_hash(url)}_{segments[-1][-60:]}")
     return rel
