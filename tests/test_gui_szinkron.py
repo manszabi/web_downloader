@@ -19,7 +19,7 @@ R = []
 
 
 def check(name, ok, info=""):
-    R.append(ok)
+    R.append(bool(ok))
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
@@ -28,8 +28,21 @@ SETTINGS = TMP / "beallitasok" / "beallitasok.json"
 SETTINGS.parent.parent.mkdir(parents=True, exist_ok=True)
 letolto.SETTINGS_FILE = SETTINGS
 
+# A gomb ket uton nyithat ablakot: Windowson az Intezot inditja a fajlra allva
+# (spawn_detached), mas rendszeren a mappat nyitja meg. Mindkettot elkapjuk.
 opened = []
 letolto.open_in_file_manager = lambda path: opened.append(("open", Path(path)))
+letolto.spawn_detached = lambda parancs: opened.append(("spawn", parancs))
+
+
+def megnyilt(esemenyek, fajl):
+    """Megnyilt-e a fajlkezelo ugy, hogy a megadott fajlhoz vezet?"""
+    if not esemenyek:
+        return False
+    fajta, adat = esemenyek[-1]
+    if fajta == "spawn":                      # Windows: az Intezo parancssoraban
+        return str(fajl) in str(adat)         # ott kell lennie a fajl utjanak
+    return adat == fajl.parent                # maskepp a mappaja nyilik meg
 
 import tkinter as tk
 
@@ -71,7 +84,7 @@ pump(0.2)
 check("a mappa létrejött", SETTINGS.parent.is_dir())
 check("a beállításfájl is elkészült, hogy legyen mit megnézni", SETTINGS.is_file())
 check("megnyílt a fájlkezelő a beállítások mappájával",
-      opened and opened[-1][1] == SETTINGS.parent, str(opened))
+      megnyilt(opened, SETTINGS), str(opened))
 check("a beállításfájl olvasható JSON", "url" in letolto.json.loads(
     SETTINGS.read_text(encoding="utf-8")))
 check("a mentés után nem marad ideiglenes fájl",

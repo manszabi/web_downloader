@@ -10,7 +10,7 @@ OUT = Path(tempfile.gettempdir()) / "letolto_osszeomlas"
 shutil.rmtree(OUT, ignore_errors=True)
 R=[]
 def check(n, ok, i=""):
-    R.append(ok); print(("[OK]   " if ok else "[HIBA] ")+n+(f"  -> {i}" if i else ""))
+    R.append(bool(ok)); print(("[OK]   " if ok else "[HIBA] ")+n+(f"  -> {i}" if i else ""))
 
 WORKER = Path(tempfile.gettempdir()) / "_letolto_crash_worker.py"
 # Az utak repr-rel kerulnek a generalt szkriptbe: Windowson a "C:\\Users\\..."

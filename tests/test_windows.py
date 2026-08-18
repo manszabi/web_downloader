@@ -36,7 +36,7 @@ TMP = Path(tempfile.gettempdir()) / "letolto_win"
 
 
 def check(name, ok, info=""):
-    R.append(ok)
+    R.append(bool(ok))
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
@@ -239,10 +239,17 @@ finally:
     letolto.sys.platform = real_platform
     if real_windll is None:
         del ctypes.windll
+    else:
+        ctypes.windll = real_windll     # valodi Windowson ne maradjon a hamis
 check("Windowson meghívja a DPI-beállítást", called["n"] == 1 and called.get("value") == 1,
       str(called))
+
 called["n"] = 0
-letolto.enable_dpi_awareness()          # most mar Linux
+letolto.sys.platform = "linux"          # a nem Windows agat is szimulalni kell:
+try:                                    # valodi Windowson kulonben tenyleg hivna
+    letolto.enable_dpi_awareness()
+finally:
+    letolto.sys.platform = real_platform
 check("más rendszeren nem hívja meg", called["n"] == 0)
 
 # --------------------------------------------------------------- 8. beallitasfajl

@@ -19,7 +19,7 @@ R = []
 
 
 def check(name, ok, info=""):
-    R.append(ok)
+    R.append(bool(ok))
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
