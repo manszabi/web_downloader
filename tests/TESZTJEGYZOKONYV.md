@@ -273,3 +273,25 @@ ellenőrzi, nem csak a viselkedését.
 Az egész csomagra 410 teszt fut (ebből 60 a robots.txt, 29 a napló, 19 az új GUI-kapcsoló),
 mind sikeres; a `test_robots.py` végponttól végpontig, valódi HTTP-kiszolgálóval is ellenőrzi
 az `Allow` felülírást és az 5xx-viselkedést.
+
+
+## 10. Az elso CI-futasok (2026-08)
+
+A GitHub Actions bevezetese utan a tesztek eloszor futottak **valodi Windowson**.
+Harom korbe telt, mig zold lett; minden hiba a tesztek oldalan volt, a program
+egyik sem. Ez pontosan az, amit a Windows-ag bevezetesetol vartunk.
+
+| Futas | Linux | Windows | Mi derult ki |
+|---|---|---|---|
+| 1. | zold | 11/14 | A futtato a gyermek kimenetet cp1252-vel dekodolta (`UnicodeDecodeError` az elso `ő` betunel), es a generalt segedszkriptekbe nyersen bekerult a `C:\Users\...` ut, amit a Python `\U` escape-nek olvas |
+| 2. | zold | 12/14 | A "Beallitasok mappaja" gomb Windowson az Intezot inditja, nem az `open_in_file_manager`-t; a DPI-teszt pedig a valodi platformon futtatta a "nem Windows" agat, es nem allitotta vissza a hamis `ctypes.windll`-t |
+| 3. | zold | **14/14** | – |
+
+Mellekes, de fontos tanulsag: a `check()` fuggveny eddig nyers kifejezest tarolt
+(`R.append(ok)`), igy egy "lista es feltetel" alaku ellenorzes listat tett a
+talalati listaba, es a szkript a **vegosszegnel** szallt el `TypeError`-ral. A valodi
+hiba helyett tehat egy kovetkezmenyre panaszkodott. Mostantol mindenhol `bool(ok)`
+kerul bele.
+
+A futas ideje: Linuxon ~2,5 perc, Windowson ~2,5 perc; a lint (`ruff` + szigoru
+`mypy`) 20 masodperc.
