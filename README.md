@@ -1,5 +1,7 @@
 # web_downloader
 
+[![ellenőrzés](https://github.com/manszabi/web_downloader/actions/workflows/ellenorzes.yml/badge.svg)](https://github.com/manszabi/web_downloader/actions/workflows/ellenorzes.yml)
+
 Weboldal-fájlletöltő grafikus felülettel: **többszálú**, **megszakítható és folytatható**,
 és átvizsgálás után kiválogathatod, mi kell.
 
@@ -123,6 +125,9 @@ python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
 python tests/test_naplo.py         python tests/test_gui_robots.py
 ```
+
+Minden feltöltésnél GitHub Actions is lefuttatja őket, **Linuxon és Windowson**, Python 3.11
+és 3.13 alatt, a `ruff` és a szigorú `mypy` mellé (`.github/workflows/ellenorzes.yml`).
 
 Jelenlegi állás: **410 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.

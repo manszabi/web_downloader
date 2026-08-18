@@ -12,6 +12,7 @@ from pathlib import Path
 # A letolto.py lehet a teszt mellett vagy egy szinttel feljebb (tests/ mappa).
 _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
+import kozos
 import testsrv
 from letolto import (DownloadManager, ScanConfig, Scanner, Status, human,
                       make_client, safe_component, url_to_relpath)
@@ -50,9 +51,8 @@ def server_md5(url):
 
 
 def rss_mb():
-    for line in open("/proc/self/status"):
-        if line.startswith("VmHWM"):
-            return int(line.split()[1]) / 1024
+    """Memoriacsucs MB-ban; ahol nem merheto, ott 0.0 (az ellenorzes kimarad)."""
+    return kozos.csucs_mb() or 0.0
 
 
 client = make_client(8)

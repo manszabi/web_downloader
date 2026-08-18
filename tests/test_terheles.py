@@ -14,6 +14,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import tempfile
 TMP = Path(tempfile.gettempdir()) / "letolto_terheles"
+import kozos
 import testsrv
 from letolto import DownloadManager, Item, Status, human, make_client
 
@@ -35,9 +36,8 @@ def fresh(name):
 
 
 def rss():
-    for line in open("/proc/self/status"):
-        if line.startswith("VmRSS"):
-            return int(line.split()[1]) / 1024
+    """Pillanatnyi memoriahasznalat MB-ban; ahol nem merheto, ott 0.0."""
+    return kozos.rss_mb() or 0.0
 
 
 def md5f(p):
@@ -62,7 +62,10 @@ dt = time.perf_counter() - t0
 after = rss()
 per = (after - before) * 1024 / 20_000
 print(f"    {dt:.2f}s, +{after - before:.1f} MB  (~{per:.0f} KB/elem)")
-check("20 000 elem < 40 MB", after - before < 40, f"+{after - before:.1f} MB")
+if kozos.merheto():
+    check("20 000 elem < 40 MB", after - before < 40, f"+{after - before:.1f} MB")
+else:
+    print("    (ezen a rendszeren nem merheto a memoria, az ellenorzes kimarad)")
 check("nyilvantartasba vetel < 5 s", dt < 5, f"{dt:.2f}s")
 
 t0 = time.perf_counter()
@@ -169,7 +172,10 @@ dt = time.perf_counter() - t0
 done = sum(1 for i in mgr.items.values() if i.status == Status.DONE)
 print(f"    {done}/{len(urls)} fajl {dt:.2f}s alatt, RSS {rss():.1f} MB (+{rss() - before:.1f})")
 check("16 szalon minden fajl kesz", done == len(urls))
-check("nincs memoriaduzzadas 16 szalon", rss() - before < 40, f"+{rss() - before:.1f} MB")
+if kozos.merheto():
+    check("nincs memoriaduzzadas 16 szalon", rss() - before < 40, f"+{rss() - before:.1f} MB")
+else:
+    print("    (ezen a rendszeren nem merheto a memoria, az ellenorzes kimarad)")
 
 # ---------------------------------------------------- 6. szalbiztonsag
 print("\n--- 6. Konyveles szalbiztonsaga ---")

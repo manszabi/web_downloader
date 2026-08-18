@@ -1,0 +1,73 @@
+# Automatikus ellenőrzés minden feltöltésnél.
+#
+# Két dolgot ad, amit kézzel nehéz: a teljes tesztcsomag lefut minden ág minden
+# feltöltésénél, és lefut WINDOWSON is – a Windows-specifikus kódot (foglalt
+# eszköznevek, MAX_PATH, fájlzárolás, konzolkódlap) eddig senki nem futtatta
+# azon a rendszeren, amire készült.
+name: ellenőrzés
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:        # kézzel is indítható a felületről
+
+permissions:
+  contents: read
+
+concurrency:                # egy ágon csak a legutolsó futás érdekes
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff + mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"        # a program alsó határa
+          cache: pip
+      - name: Függőségek
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -e ".[fejlesztes]"
+      - name: ruff
+        run: ruff check .
+      - name: mypy (szigorú)
+        run: mypy
+
+  tesztek:
+    name: tesztek (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false                  # a Windows-hiba ne rejtse el a Linuxosat
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]        # az alsó határ és a legfrissebb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: tkinter és virtuális képernyő (Linux)
+        # Windowson a tkinter a Pythonnal jön, és van képernyő is. Ha itt valami
+        # mégsem sikerül, a futtató átugorja az ablakos teszteket, nem elbukik.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-tk xvfb
+      - name: Függőségek
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -e ".[fejlesztes]"
+      - name: tesztek (Linux, virtuális képernyőn)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest -v
+      - name: tesztek (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest -v
