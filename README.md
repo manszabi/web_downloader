@@ -103,6 +103,17 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 
 ## Tesztek
 
+A teljes csomag egy paranccsal, pytesttel:
+
+```bash
+pip install pytest
+pytest                 # minden teszt
+pytest -k robots       # csak a robots.txt tesztjei
+pytest -k "not gui"    # ablak nélkül (kiszolgálón)
+```
+
+A szkriptek külön-külön is futtathatók, pytest nélkül:
+
 ```bash
 python tests/test_letolto.py       python tests/test_valogatas.py
 python tests/test_epseg.py         python tests/test_meglevo.py

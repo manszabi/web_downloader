@@ -51,3 +51,11 @@ py-modules = ["letolto", "letolto_gui"]
 
 [tool.setuptools.dynamic]
 version = { attr = "letolto.__version__" }
+
+[tool.pytest.ini_options]
+# A tesztek önálló szkriptek; a pytest a futtató fájlt gyűjti be, az indítja őket.
+# Így a "python tests/test_robots.py" és a "pytest -k robots" is működik.
+testpaths = ["tests"]
+python_files = ["futtato.py"]
+python_functions = ["test_*"]
+addopts = "-q"

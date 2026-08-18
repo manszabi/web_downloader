@@ -108,6 +108,9 @@ amikor szükség van rá. Így a parancssori mód olyan gépen is elfut, ahol ni
 
 ## Tesztek
 
+`pytest` a repó gyökeréből mindet lefuttatja (`pytest -k robots` egyetlen csoportot).
+Külön-külön is indíthatók:
+
 ```
 python test_letolto.py      python test_valogatas.py    python test_meglevo.py
 python test_epseg.py        python test_szalak.py       python test_gui.py

@@ -1,6 +1,7 @@
 """A GUI valodi futtatasa (Xvfb): atvizsgalas -> letoltes -> szunet -> leallitas."""
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ import letolto
 
 srv = testsrv.serve(8779)
 BASE = "http://127.0.0.1:8779/"
-OUT = Path("/home/claude/gui_out")
+OUT = Path(tempfile.gettempdir()) / "letolto_gui_out"
 shutil.rmtree(OUT, ignore_errors=True)
 
 R = []

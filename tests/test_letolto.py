@@ -3,6 +3,7 @@ import hashlib
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -25,7 +26,11 @@ def check(name, ok, info=""):
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
+TMP = Path(tempfile.gettempdir()) / "letolto_teszt"
+
+
 def fresh(d):
+    """Ures munkakonyvtar. A temp mappa ala megy, hogy barmelyik gepen fusson."""
     shutil.rmtree(d, ignore_errors=True)
     Path(d).mkdir(parents=True)
     return Path(d)
@@ -91,7 +96,7 @@ check("az 5 MB-os fajl NEM kerult a memoriaba", peak - base_rss < 3,
 
 # ---------------------------------------------------------------- 3. letoltes
 print("\n--- 3. Parhuzamos letoltes ---")
-OUT = fresh("/home/claude/v2_a")
+OUT = fresh(TMP / "v2_a")
 mgr = DownloadManager(OUT, 8, client=client)
 mgr.load_state()
 mgr.add_urls(found)
@@ -115,7 +120,7 @@ print(f"    {mgr.totals.files} fajl / {human(mgr.totals.bytes_done)} / {dt:.2f}s
 
 # ---------------------------------------------------------------- 4. folytatas
 print("\n--- 4. Megszakitas es folytatas ---")
-OUT = fresh("/home/claude/v2_b")
+OUT = fresh(TMP / "v2_b")
 testsrv.H.stall = 0.02
 mgr = DownloadManager(OUT, 2, client=client)
 mgr.load_state()
@@ -146,7 +151,7 @@ check("valoban folytatta (nem toltotte ujra)", partial > 0)
 
 # ---------------------------------------------------------------- 5. szunet
 print("\n--- 5. Szunet / folytatas gomb ---")
-OUT = fresh("/home/claude/v2_c")
+OUT = fresh(TMP / "v2_c")
 testsrv.H.stall = 0.01
 mgr = DownloadManager(OUT, 1, client=client)
 mgr.load_state()
@@ -167,7 +172,7 @@ check("szunet utan folytatva ep a fajl", dest.exists() and md5f(dest) == server_
 
 # ---------------------------------------------------------------- 6. gzip
 print("\n--- 6. Tomoritett (gzip) vegpont ---")
-OUT = fresh("/home/claude/v2_d")
+OUT = fresh(TMP / "v2_d")
 mgr = DownloadManager(OUT, 1, client=client)
 mgr.load_state()
 mgr.add_urls([BASE + "gz/f.bin"])
@@ -182,7 +187,7 @@ check("gzip vegpont utan is ep a fajl", dest.exists() and md5f(dest) == server_m
 
 # ---------------------------------------------------------------- 7. norange
 print("\n--- 7. Range-t nem tamogato szerver ---")
-OUT = fresh("/home/claude/v2_e")
+OUT = fresh(TMP / "v2_e")
 mgr = DownloadManager(OUT, 1, client=client)
 mgr.load_state()
 mgr.add_urls([BASE + "norange/e.bin"])
@@ -199,7 +204,7 @@ check("a konyveles nem szamolt duplan", mgr.totals.bytes_done == dest.stat().st_
 
 # ---------------------------------------------------------------- 8. 416
 print("\n--- 8. Kesz .part (416 Range Not Satisfiable) ---")
-OUT = fresh("/home/claude/v2_f")
+OUT = fresh(TMP / "v2_f")
 mgr = DownloadManager(OUT, 1, client=client)
 mgr.load_state()
 mgr.add_urls([BASE + "files/b.bin"])
@@ -213,7 +218,7 @@ check("416 eseten a kesz .part veglegesitve", dest.exists() and md5f(dest) == se
 
 # ---------------------------------------------------------------- 9. hibak
 print("\n--- 9. Hibakezeles ---")
-OUT = fresh("/home/claude/v2_g")
+OUT = fresh(TMP / "v2_g")
 mgr = DownloadManager(OUT, 2, client=client)
 mgr.load_state()
 mgr.add_urls([BASE + "files/nincs_ilyen.bin", BASE + "files/a.bin"])
@@ -226,7 +231,7 @@ check("a hiba nem allitja meg a tobbit", len(oks) == 1)
 
 # ---------------------------------------------------------------- 10. utkozes
 print("\n--- 10. Nevutkozes ---")
-OUT = fresh("/home/claude/v2_h")
+OUT = fresh(TMP / "v2_h")
 mgr = DownloadManager(OUT, 1, client=client)
 mgr.load_state()
 mgr.add_urls(["http://a.hu/x/f.bin", "http://a.hu/x/f.bin?v=2"])
