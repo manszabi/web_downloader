@@ -37,6 +37,7 @@ from dataclasses import field as dataclass_field
 from enum import StrEnum
 from hashlib import blake2b
 from html.parser import HTMLParser
+from logging.handlers import RotatingFileHandler
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Final
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
@@ -71,7 +72,19 @@ def _settings_path() -> Path:
     return Path.home() / ".letolto_beallitasok.json"
 
 
+def _log_path() -> Path:
+    """A naplófájl a beállítások mellé kerül, ugyanazzal a névadási szokással."""
+    appdata = os.environ.get("APPDATA")
+    if sys.platform == "win32" and appdata:
+        return Path(appdata) / "PyLetolto" / "naplo.log"
+    return Path.home() / ".letolto_naplo.log"
+
+
 SETTINGS_FILE: Final = _settings_path()
+LOG_FILE: Final = _log_path()
+LOG_MAX_BYTES: Final = 1024 * 1024     # ekkora naplófájlnál jön a rotálás (~10 ezer sor)
+LOG_BACKUPS: Final = 3                 # naplo.log.1 .. .3 -> a napló összesen legfeljebb 4 MB
+LOG_ROTATE_RETRY: Final = 60.0         # sikertelen rotálás után ennyi ideig nem próbáljuk újra
 STATE_VERSION: Final = 2
 MAX_RETRIES: Final = 4
 MAX_RETRY_AFTER: Final = 30            # a Retry-After fejlécet ennyi másodpercre korlátozzuk
@@ -147,6 +160,75 @@ def _brief(exc: BaseException) -> str:
     """Rövid, felületre való hibaszöveg (a httpx üzenetei többsorosak)."""
     text = str(exc).strip().splitlines()
     return (text[0] if text else type(exc).__name__)[:120]
+
+
+# --------------------------------------------------------------------------- #
+#  Naplófájl
+# --------------------------------------------------------------------------- #
+
+# Külön naplózó a fájlnak: a felület és a parancssor kimenetét nem érinti, ezért
+# a fájlba részletesebben írhatunk, mint amennyi a képernyőn hasznos lenne.
+file_log = logging.getLogger("letolto.naplo")
+file_log.propagate = False
+
+
+class RotatingLog(RotatingFileHandler):
+    """Rotáló naplófájl, amely a névcserén nem bukik el.
+
+    Windowson a fájlt fogva tarthatja a víruskereső, egy megnyitott szerkesztő
+    vagy a program egy másik példánya, és ilyenkor az átnevezés ``PermissionError``-ral
+    elszáll. A rotálás nem ér annyit, hogy emiatt üzenetek vesszenek el vagy
+    elszálljon a program: a hibát elnyeljük, a napló tovább nő a régi fájlban, és
+    egy percig nem próbálkozunk újra (különben minden egyes sornál próbálnánk).
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)   # type: ignore[arg-type]
+        self._retry_after = 0.0
+
+    def shouldRollover(self, record: logging.LogRecord) -> int:
+        if time.monotonic() < self._retry_after:
+            return 0
+        return super().shouldRollover(record)
+
+    def rotate(self, source: str, dest: str) -> None:
+        atomic_replace(Path(source), Path(dest))   # Windowson újrapróbálkozik
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            self._retry_after = time.monotonic() + LOG_ROTATE_RETRY
+            if self.stream is None:                # a szülő lezárta, de nem nyitotta újra
+                with suppress(OSError):
+                    self.stream = self._open()
+
+
+def setup_file_log(path: Path = LOG_FILE) -> Path | None:
+    """A rotáló naplófájl bekapcsolása; a visszatérési érték a fájl helye.
+
+    Napló nélkül is működnie kell a programnak: ha a mappa nem írható (csak
+    olvasható profil, teli lemez), a hibát megjegyezzük, és megyünk tovább.
+    """
+    if file_log.handlers:                          # kétszer ne akasszunk rá kezelőt
+        return Path(file_log.handlers[0].baseFilename)   # type: ignore[attr-defined]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingLog(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
+                              encoding="utf-8", delay=True)
+    except OSError as exc:
+        log.warning("A naplófájl nem hozható létre (%s): %s", path, exc)
+        return None
+    handler.setFormatter(logging.Formatter("%(asctime)s  [%(threadName)s]  %(message)s",
+                                           datefmt="%Y-%m-%d %H:%M:%S"))
+    file_log.addHandler(handler)
+    file_log.setLevel(logging.INFO)
+    return path
+
+
+def note(message: str) -> None:
+    """Egy sor a naplófájlba. Naplózás nélkül (tesztek) csendben elszáll."""
+    file_log.info("%s", message)
 
 
 # --------------------------------------------------------------------------- #
@@ -753,6 +835,9 @@ class Scanner:
         A szűrés tudatosan a felhasználóra marad, hogy az átvizsgálás után a
         talált kiterjesztések közül lehessen válogatni.
         """
+        note(f"Átvizsgálás indul: {self.cfg.root} (mélység {self.cfg.depth}, "
+             f"{'csak azonos domain' if self.cfg.same_host else 'bármely domain'}, "
+             f"robots.txt: {'betartva' if self.cfg.respect_robots else 'figyelmen kívül'})")
         crawl = self._Crawl(result=ScanResult(), visited=set(), seen_files=set(),
                             todo=deque([(self.cfg.root, 0)]),
                             root_host=urlparse(self.cfg.root).netloc)
@@ -789,6 +874,8 @@ class Scanner:
 
         if len(visited) >= self.cfg.max_pages:
             self.on_log(f"Elértük az oldalkorlátot ({self.cfg.max_pages}).")
+        note(f"Átvizsgálás vége: {len(result.pages)} lap, {len(result.files)} fájl, "
+             f"{len(visited)} megnyitott cím")
         return result
 
     def _sort_links(self, links: list[str], base: str, depth: int,
@@ -935,6 +1022,8 @@ class DownloadManager:
         self._used_paths: set[str] = set()
         self._speed = 0.0                 # bájt/mp, exponenciálisan simítva
         self._speed_mark = (time.monotonic(), 0)
+        note(f"Célkönyvtár: {self.outdir} ({self.threads} szál, "
+             f"meglévő fájl: {self.existing})")
 
     # -- életciklus -------------------------------------------------------
     @property
@@ -1253,6 +1342,7 @@ class DownloadManager:
     def _download(self, item: Item) -> None:
         dest = self.outdir / item.path
         part = dest.with_name(dest.name + ".part")
+        note(f"Letöltés: {item.url} -> {dest}")
         try:
             self._gate()
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1754,6 +1844,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
 
         # -- segédek ------------------------------------------------------
         def _write_log(self, message: str) -> None:
+            note(message)                    # ugyanez a sor a naplófájlba is
             self.log.configure(state="normal")
             self.log.insert("end", message + "\n")
             self._log_lines += 1
@@ -1786,6 +1877,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 self._save_settings()      # legyen mit megnézni az első indításkor is
             reveal_in_file_manager(SETTINGS_FILE)
             self._write_log(f"Beállítások helye: {SETTINGS_FILE}")
+            self._write_log(f"Naplófájl: {LOG_FILE}")
 
         def _ensure_manager(self) -> DownloadManager | None:
             raw = self.v_dir.get().strip()
@@ -2287,7 +2379,7 @@ def run_cli(args: argparse.Namespace) -> int:
         cfg = ScanConfig(root=args.url, depth=args.depth,
                          same_host=not args.any_host, respect_robots=not args.ignore_robots,
                          stop_on_robots_error=args.robots_5xx_stop)
-        found = Scanner(cfg, client, log.info, threading.Event()).run()
+        found = Scanner(cfg, client, _cli_log, threading.Event()).run()
         groups = found.by_extension()
         chosen = matching_extensions(found, wanted, args.html)
         log.info("Talált kiterjesztések: %s", ", ".join(
@@ -2320,7 +2412,14 @@ def run_cli(args: argparse.Namespace) -> int:
 
 def _cli_event(kind: str, payload: object) -> None:
     if kind == "log":
+        note(str(payload))                   # ugyanez a sor a naplófájlba is
         print("\r" + str(payload).ljust(78))
+
+
+def _cli_log(message: str) -> None:
+    """Az átvizsgálás üzenetei: képernyőre és a naplófájlba is."""
+    log.info(message)
+    note(message)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2345,9 +2444,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-gui", action="store_true", help="parancssori futtatás")
     parser.add_argument("-V", "--version", action="version", version=f"letolto {__version__}")
     args = parser.parse_args(argv)
-    if args.no_gui or args.url:
-        return run_cli(args)
-    return run_gui()
+    cli = bool(args.no_gui or args.url)
+    setup_file_log()
+    note("-" * 70)
+    note(f"PyLetolto {__version__} indul ({'parancssor' if cli else 'grafikus felület'}), "
+         f"Python {sys.version.split()[0]}, {sys.platform}")
+    try:
+        return run_cli(args) if cli else run_gui()
+    finally:
+        note(f"PyLetolto {__version__} kilép")
 
 
 if __name__ == "__main__":

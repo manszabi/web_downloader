@@ -92,10 +92,37 @@ python tests/test_szalak.py        python tests/test_gui.py
 python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
+python tests/test_naplo.py
 ```
 
-Jelenlegi állás: **349 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **374 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
+
+---
+
+## Naplófájl
+
+A program a beállítások mellé rotáló naplót ír, tehát nem nő korlátlanul:
+
+| Rendszer | Hely |
+|---|---|
+| Windows | `%APPDATA%\PyLetolto\naplo.log` |
+| Linux, macOS | `~/.letolto_naplo.log` |
+
+A fájl 1 MB-onként fordul, és 3 mentést tart meg (`naplo.log.1` … `naplo.log.3`), vagyis a napló
+összesen legfeljebb ~4 MB. UTF-8 kódolású, és minden sor tartalmazza az időt és a szál nevét:
+
+```
+2026-08-18 19:27:13  [dl]  Letöltés: http://pelda.hu/a.bin -> C:\letoltesek\pelda.hu\a.bin
+2026-08-18 19:27:13  [dl]  Kész: pelda.hu/a.bin (293.0 KB)
+```
+
+Bekerül a program indulása és kilépése, a célkönyvtár és a szálszám, az átvizsgálás
+paraméterei és eredménye, fájlonként a forrás cím és a célfájl, a kész letöltések, valamint
+minden hiba és figyelmeztetés – az újrapróbálkozások, a méreteltérés miatti újratöltés és a
+`robots.txt` gondjai (5xx, tiltás) is. A GUI *Beállítások mappája* gombja a napló helyét is
+kiírja. Ha a fájl épp zárolt (Windowson víruskereső, megnyitott szerkesztő vagy egy másik
+példány), a rotálás kimarad, de a naplózás nem áll le és a program sem hibázik el tőle.
 
 ---
 

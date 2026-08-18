@@ -74,6 +74,15 @@ Ebben a fájlban őrződik az URL, a célkönyvtár, a kiterjesztés-szűrő, a 
   naplóüzenettel folytatja. A hiányzó `robots.txt` (404) nem tartozik ide: az azt jelenti,
   hogy nincs tiltás.
 
+## Naplófájl
+
+A futás eseményei a beállítások mellé, rotáló naplófájlba kerülnek: Windowson
+`%APPDATA%\PyLetolto\naplo.log`, máshol `~/.letolto_naplo.log`. 1 MB-onként fordul, 3 mentést
+tart meg (`naplo.log.1` … `naplo.log.3`), tehát legfeljebb ~4 MB-ot foglal. Benne van az
+indulás és a kilépés, a célkönyvtár, az átvizsgálás paraméterei és eredménye, fájlonként a
+forrás cím és a célfájl, továbbá minden hiba – az újrapróbálkozások és a `robots.txt` gondjai
+is. A pontos helyét a *Beállítások mappája* gomb írja ki.
+
 ## Megszakítás és folytatás
 
 A *Szünet* és a *Leállítás* is folytatható állapotot hagy maga után; a részfájlok `.part`
@@ -98,6 +107,7 @@ python test_letolto.py      python test_valogatas.py    python test_meglevo.py
 python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
 python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
+python test_naplo.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi
