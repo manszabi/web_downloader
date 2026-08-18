@@ -80,6 +80,9 @@ HTTP_OK: Final = 200
 HTTP_PARTIAL: Final = 206
 HTTP_BAD_REQUEST: Final = 400
 HTTP_RANGE_NOT_SATISFIABLE: Final = 416
+HTTP_SERVER_ERROR: Final = 500          # ettől fölfelé a kiszolgáló hibája
+ROBOTS_TRIES: Final = 3                # a robots.txt lekérésének próbálkozásai
+ROBOTS_RETRY_WAIT: Final = 1.0         # az újrapróbálkozások közti alapszünet (mp)
 RETRY_STATUS: Final = frozenset({408, 425, 429, 500, 502, 503, 504})
 HTML_EXTS: Final = frozenset({"", ".html", ".htm", ".xhtml", ".php", ".asp",
                               ".aspx", ".jsp", ".cgi", ".shtml"})
@@ -126,6 +129,10 @@ class Existing(StrEnum):
 
 class Cancelled(Exception):
     """A felhasználó leállította a munkát."""
+
+
+class RobotsUnavailable(Exception):
+    """A robots.txt nem érhető el, és a beállítás szerint ez teljes tiltás."""
 
 
 class Retryable(Exception):
@@ -616,6 +623,7 @@ class ScanConfig:
     depth: int = 0
     same_host: bool = True
     respect_robots: bool = True
+    stop_on_robots_error: bool = False   # elérhetetlen robots.txt: leállás vagy folytatás
     max_pages: int = 500
 
 
@@ -631,20 +639,48 @@ class Scanner:
         self._robots: dict[str, RobotsRules] = {}
 
     # -- robots.txt ------------------------------------------------------
+    def _fetch_robots(self, origin: str) -> RobotsRules:
+        """A kiszolgáló szabályai; elérhetetlen fájl esetén a beállítás dönt.
+
+        Az RFC 9309 §2.3.1.4 különbséget tesz a kétféle hiba között: a 4xx azt
+        jelenti, hogy *nincs* szabály (minden bejárható), az 5xx viszont azt,
+        hogy *nem tudjuk*, mi a szabály - ez teljes tiltást kíván. Egy villanásnyi
+        szerverhiba ne döntsön ekkorát, ezért előbb néhányszor újrapróbáljuk; a
+        hálózati hibát (időtúllépés, megszakadt kapcsolat) ugyanígy kezeljük,
+        mert az is "nem tudjuk".
+        """
+        reason = ""
+        for attempt in range(1, ROBOTS_TRIES + 1):
+            try:
+                resp = self.client.get(f"{origin}/robots.txt", timeout=10.0)
+            except httpx.HTTPError as exc:
+                reason = type(exc).__name__
+            else:
+                if resp.status_code == HTTP_OK:
+                    return RobotsRules.parse(resp.text)
+                if resp.status_code < HTTP_SERVER_ERROR:
+                    return RobotsRules()   # nincs robots.txt -> nincs tiltás
+                reason = f"HTTP {resp.status_code}"
+            if attempt < ROBOTS_TRIES:
+                self.on_log(f"A robots.txt nem érhető el ({reason}) - {attempt}. kísérlet, "
+                            f"újrapróbálom: {origin}")
+                if self.stop.wait(ROBOTS_RETRY_WAIT * attempt):
+                    raise Cancelled
+        if self.cfg.stop_on_robots_error:
+            raise RobotsUnavailable(
+                f"A(z) {origin} robots.txt-je {ROBOTS_TRIES} próbálkozásra sem érhető el "
+                f"({reason}), az átvizsgálás leáll.")
+        self.on_log(f"A(z) {origin} robots.txt-je nem érhető el ({reason}), "
+                    "az átvizsgálás folytatódik.")
+        return RobotsRules()
+
     def _allowed(self, url: str) -> bool:
         if not self.cfg.respect_robots:
             return True
         parts = urlparse(url)
         origin = f"{parts.scheme}://{parts.netloc}"
         if origin not in self._robots:
-            rules = RobotsRules()          # hiányzó vagy hibás robots.txt: nincs tiltás
-            try:
-                resp = self.client.get(f"{origin}/robots.txt", timeout=10.0)
-                if resp.status_code == HTTP_OK:
-                    rules = RobotsRules.parse(resp.text)
-            except httpx.HTTPError:
-                pass
-            self._robots[origin] = rules
+            self._robots[origin] = self._fetch_robots(origin)
         return self._robots[origin].allowed(url)
 
     @staticmethod
@@ -729,24 +765,27 @@ class Scanner:
             if url in visited:
                 continue
             visited.add(url)
-            if not self._allowed(url):
-                self.on_log(f"robots.txt tiltja: {url}")
-                continue
-
             try:
+                if not self._allowed(url):
+                    self.on_log(f"robots.txt tiltja: {url}")
+                    continue
+
                 page = self._read_page(url)
+                if page is None:                   # nem HTML -> maga is fájl
+                    if url not in seen_files:
+                        seen_files.add(url)
+                        result.files.append(url)
+                    continue
+
+                result.pages.append(url)           # ez egy letölthető HTML lap
+                base, links = page
+                self.on_log(f"Átvizsgálás (mélység {depth}): {url} - {len(links)} hivatkozás")
+                self._sort_links(links, base, depth, crawl)
+            except RobotsUnavailable as exc:
+                self.on_log(str(exc))
+                break
             except Cancelled:
                 break
-            if page is None:                       # nem HTML -> maga is fájl
-                if url not in seen_files:
-                    seen_files.add(url)
-                    result.files.append(url)
-                continue
-
-            result.pages.append(url)               # ez egy letölthető HTML lap
-            base, links = page
-            self.on_log(f"Átvizsgálás (mélység {depth}): {url} - {len(links)} hivatkozás")
-            self._sort_links(links, base, depth, crawl)
 
         if len(visited) >= self.cfg.max_pages:
             self.on_log(f"Elértük az oldalkorlátot ({self.cfg.max_pages}).")
@@ -1495,6 +1534,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             for name, var in (("url", self.v_url), ("dir", self.v_dir), ("ext", self.v_ext),
                               ("depth", self.v_depth), ("threads", self.v_threads),
                               ("same_host", self.v_same), ("robots", self.v_robots),
+                              ("robots5xx", self.v_robots5xx),
                               ("existing", self.v_existing), ("html", self.v_html)):
                 if name in saved:
                     with suppress(tk.TclError, ValueError):
@@ -1504,6 +1544,7 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             data = {"url": self.v_url.get(), "dir": self.v_dir.get(), "ext": self.v_ext.get(),
                     "depth": self.v_depth.get(), "threads": self.v_threads.get(),
                     "same_host": self.v_same.get(), "robots": self.v_robots.get(),
+                    "robots5xx": self.v_robots5xx.get(),
                     "existing": self.v_existing.get(), "html": self.v_html.get()}
             # Ugyanaz a minta, mint az állapotfájlnál: előbb ideiglenes fájlba írunk,
             # és csak a kész tartalom lép a régi helyére. Így áramszünet vagy
@@ -1616,6 +1657,11 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
             self.v_robots = tk.BooleanVar(value=True)
             ttk.Checkbutton(box, text="robots.txt betartása", variable=self.v_robots).grid(
                 row=5, column=2, sticky="w")
+            # Kipipálva: az elérhetetlen robots.txt leállítja az átvizsgálást (RFC 9309),
+            # üresen hagyva a program a régi, megengedő módon folytatja.
+            self.v_robots5xx = tk.BooleanVar(value=False)
+            ttk.Checkbutton(box, text="5xx hibánál leáll", variable=self.v_robots5xx).grid(
+                row=5, column=3, columnspan=2, sticky="w")
 
             label("Meglévő fájl:", 6, 0)
             self.v_existing = tk.StringVar(value=str(Existing.VERIFY))
@@ -1776,7 +1822,8 @@ def run_gui() -> int:                                   # pragma: no cover (GUI)
                 return
             cfg = ScanConfig(root=url, depth=self.v_depth.get(),
                              same_host=self.v_same.get(),
-                             respect_robots=self.v_robots.get())
+                             respect_robots=self.v_robots.get(),
+                             stop_on_robots_error=self.v_robots5xx.get())
             self.scanning = True
             self.scan_stop.clear()
             self.b_scan.configure(state="disabled")
@@ -2238,7 +2285,8 @@ def run_cli(args: argparse.Namespace) -> int:
     manager.load_state()
     if args.url:
         cfg = ScanConfig(root=args.url, depth=args.depth,
-                         same_host=not args.any_host, respect_robots=not args.ignore_robots)
+                         same_host=not args.any_host, respect_robots=not args.ignore_robots,
+                         stop_on_robots_error=args.robots_5xx_stop)
         found = Scanner(cfg, client, log.info, threading.Event()).run()
         groups = found.by_extension()
         chosen = matching_extensions(found, wanted, args.html)
@@ -2289,6 +2337,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--html", action="store_true", help="a HTML lapok is töltődjenek le")
     parser.add_argument("--any-host", action="store_true", help="más domainek is")
     parser.add_argument("--ignore-robots", action="store_true", help="robots.txt figyelmen kívül")
+    parser.add_argument("--robots-5xx-stop", action="store_true",
+                        help="ha a robots.txt 5xx miatt elérhetetlen, álljon le az átvizsgálás")
     parser.add_argument("--meglevo", choices=[str(e) for e in Existing],
                         default=str(Existing.VERIFY),
                         help="mi történjék a már meglévő fájlokkal")

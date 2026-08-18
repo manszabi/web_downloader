@@ -67,6 +67,12 @@ Ebben a fájlban őrződik az URL, a célkönyvtár, a kiterjesztés-szűrő, a 
   szerint értelmezi: a `*` és a záró `$` joker is érvényes, ütközéskor a leghosszabb minta
   dönt, azonos hossznál pedig az `Allow` – így az `Allow` felül tudja írni a tágabb
   `Disallow`-ot.
+* **5xx hibánál leáll** – mi legyen, ha maga a `robots.txt` nem érhető el (a kiszolgáló 5xx-et
+  ad, vagy elszáll a kapcsolat). A program ilyenkor háromszor próbálkozik, egyre hosszabb
+  szünettel; ha egyik sem sikerül, **kipipálva** leállítja az átvizsgálást (nem tudjuk, mit
+  tiltott volna az oldal – ez az RFC 9309 szigorú olvasata), **pipa nélkül** pedig
+  naplóüzenettel folytatja. A hiányzó `robots.txt` (404) nem tartozik ide: az azt jelenti,
+  hogy nincs tiltás.
 
 ## Megszakítás és folytatás
 
@@ -82,7 +88,7 @@ python letolto.py https://pelda.hu/ -o C:\letoltesek -e pdf,zip -d 1 -t 8
 python letolto.py --no-gui -o C:\letoltesek          # csak a félbemaradtak folytatása
 ```
 
-Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
+Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
 ## Tesztek

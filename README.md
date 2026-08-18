@@ -65,7 +65,7 @@ python letolto.py https://pelda.hu/ -o ./letoltesek -e pdf,zip -d 1 -t 8
 python letolto.py --no-gui -o ./letoltesek      # csak a félbemaradtak folytatása
 ```
 
-Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
+Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
 ---
@@ -94,7 +94,7 @@ python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
 ```
 
-Jelenlegi állás: **334 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Jelenlegi állás: **349 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---
@@ -103,6 +103,12 @@ A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert
 
 A program alapértelmezés szerint betartja a `robots.txt` tiltásait, az RFC 9309
 (Robots Exclusion Protocol) szabályai szerint: a `*` és a záró `$` joker is érvényes, és
-ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer. A szálszámot érdemes
+ütköző sorok közül a leghosszabb minta dönt – azonos hossznál az `Allow` nyer.
+
+Ha a `robots.txt` **nem érhető el** (5xx vagy hálózati hiba), a program háromszor újrapróbálja,
+majd a beállítás dönt: a *5xx hibánál leáll* pipa (parancssorban `--robots-5xx-stop`) az RFC
+szerinti szigorú olvasat, vagyis inkább nem jár be semmit; pipa nélkül – ez az alapértelmezés –
+naplóüzenettel folytatja. A 4xx (nincs ilyen fájl) egyik esetben sem hiba: az azt jelenti, hogy
+az oldal nem tiltott semmit. A szálszámot érdemes
 barátságos szinten (4–8) tartani, hogy ne terheld túl a kiszolgálót. A letöltött tartalom
 felhasználására a forrásoldal feltételei vonatkoznak.
