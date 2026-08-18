@@ -16,7 +16,8 @@ Más rendszeren: `pip install httpx`, majd `python letolto.py`.
 3. **Átvizsgálás** gomb. Ez most már *minden* találatot összegyűjt, majd háttérben ellenőrzi,
    mi van már meg a lemezen.
 4. **Talált kiterjesztések** panel – kipipálod, mi kell. Az „Összes" / „Egyik sem" gomb az
-   egész csoportra hat. A kiterjesztés nélküli fájlok külön csoportba kerülnek.
+   egész csoportra hat. A kiterjesztés nélküli fájlok külön csoportba kerülnek. A pipák és az
+   alatta lévő **Kiterjesztések** mező mindkét irányban követik egymást.
 5. **Fájllista** – soronként is pipálható: kattints a ✓ oszlopra, vagy nyomj szóközt a
    kijelölt sorokon. Fölötte „Összes kijelölése" / „Kijelölés törlése".
 6. **Indítás / Folytatás** – letölti a kipipált fájlokat.
@@ -36,6 +37,25 @@ Az „Összes" a többi ilyen fájlra is igent mond, és nem kérdez újra.
 
 A kézi mező üresen hagyva minden kiterjesztést jelent. A HTML-lapokat csak akkor tölti le,
 ha a **HTML letöltése** be van pipálva – így a bejárt oldalak nem árasztják el a listát.
+
+A **Talált kiterjesztések** panel és a **Kiterjesztések** mező mindig egyben mozog:
+
+* ha a panelen pipálsz, a mezőbe magától beíródik a kipipált kiterjesztések listája
+  (pl. `pdf, png`), mintha kézzel gépelted volna be – a html nem a mezőbe kerül, hanem a
+  **HTML letöltése** kapcsolóra;
+* ha a mezőbe írsz vagy a HTML-kapcsolót állítod, a panelen igazodnak a pipák (és velük a
+  fájllista kijelölése is) – a gépelés után kis szünettel, hogy ne kapkodjon minden leütésre;
+* ha semmi sincs kipipálva, a mezőben `(egyik sem)` látszik, mert az üres mező „minden
+  kiterjesztést" jelentene; a mezőt üresre törölve rögtön vissza is kapod a „mindent";
+* a kiterjesztés nélküli csoport neve `(nincs kiterjesztés)`, ez így is írható a mezőbe.
+
+### Beállítások mappája
+
+A **Beállítások mappája** gomb új fájlkezelő-ablakot nyit a beállításfájl helyén (Windowson
+`%APPDATA%\PyLetolto\beallitasok.json`, máshol a home könyvtárban `.letolto_beallitasok.json`),
+és Windowson rögtön ki is jelöli a fájlt. Ha még nem lenne meg, a gomb létrehozza.
+Ebben a fájlban őrződik az URL, a célkönyvtár, a kiterjesztés-szűrő, a mélység, a szálszám
+és a többi kapcsoló.
 
 ### Egyéb beállítások
 
@@ -68,7 +88,7 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`,
 python test_letolto.py      python test_valogatas.py    python test_meglevo.py
 python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
-python test_gui_valogatas.py
+python test_gui_valogatas.py                            python test_gui_szinkron.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi

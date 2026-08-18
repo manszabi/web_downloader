@@ -73,21 +73,28 @@ Ez a 12-szeres megszakításos teszten mérhető: a részfájl körönként nő
 ## 5. Végleges tesztek
 
 ```
+GUI-szinkron, beállítások (test_gui_szinkron)  54 / 54
+Windows-specifikus ellenőrzések (test_windows)  49 / 49
+Válogatás, kiterjesztések (test_valogatas.py)  48 / 48
 Funkcionális teszt (test_letolto.py)            30 / 30
 Épség és felülírás (test_epseg.py, Xvfb)       28 / 28
-Válogatás, kiterjesztések (test_valogatas.py)  25 / 25
 GUI-válogatás (test_gui_valogatas.py, Xvfb)    19 / 19
 Élő szálszám-változtatás (test_szalak.py)      18 / 18
 Meglévő fájlok (test_meglevo.py)               16 / 16
 GUI végponttól végpontig (test_gui.py, Xvfb)   15 / 15
 Terhelés és összeomlás (test_terheles.py)      14 / 14
-Összeomlás utáni folytatás (test_osszeomlas)   10 / 10
-Windows-specifikus ellenőrzések (test_windows)  34 / 34
+Összeomlás utáni folytatás (test_osszeomlas)   11 / 11
 -------------------------------------------------------
-Összesen                                      209 / 209
-ruff (E,F,W,B,UP,SIM,C4,RUF,PL)        All checks passed
-mypy                                   Success: no issues found
+Összesen                                      302 / 302
+ruff check          (ruff.toml szerint)   All checks passed
+mypy letolto.py                           Success: no issues found
 ```
+
+A lint beállításai a `ruff.toml`-ban vannak rögzítve (`target-version = "py311"`,
+`line-length = 100`, a fenti szabálykészlet), így a `ruff check` kapcsolók nélkül is
+ugyanazt jelenti minden gépen. Ez azért lényeges, mert a `sys.version_info < (3, 11)`
+őrre tett `# noqa: UP036` csak py311-es célverzió mellett indokolt: alacsonyabb
+célverziónál a ruff „fölösleges noqa"-ként (RUF100) jelezte volna.
 
 Kiemelt esetek:
 
@@ -136,6 +143,34 @@ Végponttól végpontig futó ellenőrzés valós letöltéssel, Windows-ellenes
 PROBLEMAK: nincs
 ```
 
+## 5/b. A kiterjesztés-szinkron és a beállítás-gomb felülvizsgálata
+
+A két új funkció (kétirányú kiterjesztés-szinkron, „Beállítások mappája" gomb) átnézésekor
+talált és javított hibák:
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 20 | Az Intéző hívása listás `Popen(["explorer", "/select,..."])` alakban | A `list2cmdline` a *teljes* paramétert idézőjelbe teszi, ha az útvonalban szóköz van (`explorer "/select,C:\Users\Kis Béla\..."`). Az Intéző ezt nem érti: **nem a fájlt jelöli ki, hanem a Dokumentumok mappát nyitja meg.** Márpedig a `%APPDATA%` úton a magyar felhasználónevek jó része szóközös | `subprocess.list2cmdline` kimenete; a jelenség a Microsoft/WSL #7603 és a click #2994 hibajegyben is dokumentált. Javítás: egyetlen parancssztring, az idézőjel a `/select,` **után** |
+| 21 | Az `explorer` név szerint indult | A `CreateProcess` `lpApplicationName=NULL` mellett a **futó folyamat munkakönyvtárát** is végignézi a rendszerkönyvtár előtt - egy letöltött, odakerült `explorer.exe` indulhatna el helyette. Egy letöltőprogramnál ez nem elméleti | a CreateProcess keresési sorrendje. Javítás: `%WINDIR%\explorer.exe` teljes úttal, idézőjelben |
+| 22 | A mező vesszővel tagol, a kiterjesztés-címke viszont tartalmazhat vesszőt (`adat.2024,csv` → `2024,csv`) | A panelről a mezőbe írva a címke két hamis kiterjesztésre esett volna szét, és a következő igazításkor **magától lekerült volna a pipa** a fájlokról | `ext_label("http://a/b/adat.2024,csv") == "2024,csv"`. Javítás: az ilyen címkét a mező nem írja le és nem is veszi el (`text_representable`) |
+| 23 | „Korábbi állapot" betöltése után a kiterjesztés-panel üres maradt | A betöltött fájlokra a csoportos pipálás és - az új szinkron miatt - a kézi mező sem hatott: a felhasználó azt látta, hogy a beírt szűrő nem csinál semmit | teszt: 3 elemű állapotfájl betöltése után 0 elem a panelen. Javítás: a panel a betöltött elemekből is felépül |
+| 24 | Régi állapotfájlban nincs `label` mező | A címke nélküli elemekre semelyik kiterjesztés-pipa nem hatott (üres címkéhez nincs jelölőnégyzet) | teszt: `Item(url=".../regi.pdf")` címke nélkül. Javítás: `item_label()` a címből pótolja |
+| 25 | Egy pipa átállítása kiterjesztésenként végigjárta a teljes listát, és **minden** sorát újrarajzolta | 20 000 elemnél a hat címke állítgatása hatszoros végigjárás és 120 000 fölösleges sorfrissítés a táblázatban | mérés: 20 000 elem, két címke levétele **21 ms** egyetlen végigjárással, és csak a ténylegesen változó 6 668 sor rajzolódik újra; változatlan állapotnál **egy sor sem** (2 ms). Csúcsmemória 0,7 MB |
+| 26 | Az épség-ellenőrzés végén a **teljes** lista újrarajzolódott | Ugyanez a fölösleges munka minden átvizsgálás után; ráadásul a kipipált címkék halmaza sérült fájlonként újraszámolódott | kódelemzés. Javítás: csak az ellenőrzött elemek sorai frissülnek, a címkehalmaz egyszer készül el |
+
+Ugyanebben a körben javított apróbb hiányosságok:
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 27 | A beállításfájl mentése egy lépésben, közvetlenül a végleges helyre írt | Áramszünet vagy összeomlás írás közben csonka JSON-t hagyott volna: a következő indítás elveszítette volna az URL-t, a célkönyvtárat és a szűrőt. Az állapotfájl ezt már helyesen csinálta | kódelemzés. Javítás: `.tmp` fájl + `atomic_replace` (a Windows-os zárolásra újrapróbálkozó csere) |
+| 28 | A fájlkezelő indítása `Popen` volt, `wait()` nélkül | POSIX-on minden „Mappa megnyitása" után zombi folyamat maradt a program végéig, és a fájlkezelő a konzolunkra írt. Windowson lényegtelen, máshol nem | teszt: két indítás után a befejezett folyamat begyűjtve. Javítás: `spawn_detached()` - saját munkamenet, elnyelt kimenet, a befejezettek begyűjtése |
+| 29 | A GUI-tesztek a **valódi** beállításfájlt írták (`~/.letolto_beallitasok.json`) | Az egyik teszt mentett állapota átszivárgott a következőbe (a mérés közben pl. a HTML-kapcsoló bekapcsolva jött egy korábbi futásból), és a fejlesztő saját beállításai is felülíródtak | `testsrv.temp_settings()` minden GUI-teszthez saját, üres fájlt ad; ellenőrizve, hogy a teljes csomag lefutása után sem jön létre a valódi fájl |
+| 30 | A `__pycache__` bekerült a verziókövetésbe, és nem volt `.gitignore` | Fordított bájtkód a repóban | `.gitignore` + a fájlok kivétele a követésből |
+
+Az „egyik sem" állapot jelölése (`(egyik sem)`) azért kellett, mert az üres mező a program
+eredeti szabálya szerint „minden kiterjesztést" jelent - enélkül az „Egyik sem" gomb után egy
+újabb átvizsgálás mindent visszapipált volna.
+
 ## 6. Mit tud most, amit korábban nem
 
 * `If-Range` + ETag/Last-Modified: megváltozott fájl esetén tiszta újratöltés, nem sérült keverék.
@@ -165,6 +200,16 @@ PROBLEMAK: nincs
 * **HTML-lapok külön kapcsolón**: a kézi kiterjesztés-mező üresen hagyva minden kiterjesztést
   jelent, a HTML-lapokat viszont csak akkor tölti le, ha a „HTML letöltése" be van pipálva -
   így nem árasztják el a listát a bejárt oldalak, de egy kattintással kérhetők.
+* **A kiterjesztés-panel és a kézi mező összehangolása**: a „Talált kiterjesztések" pipái és
+  az alattuk lévő „Kiterjesztések" mező mindkét irányban követik egymást. Panelen pipálva a
+  mezőbe magától beíródik a kipipált címkék listája (`pdf, png`), a html pedig a „HTML
+  letöltése" kapcsolóra kerül; a mezőbe gépelve (350 ms szünet után, hogy ne fusson minden
+  leütésre) a panel pipái és velük a fájllista kijelölése igazodik. A körkörös felülírást
+  közös őrjelző akadályozza meg. Az üres mező továbbra is „minden kiterjesztést" jelent,
+  ezért az „egyik sem" állapotnak saját jelölése van: `(egyik sem)`.
+* **Beállítások mappája gomb**: külön fájlkezelő-ablakot nyit a beállításfájl helyén, és
+  Windowson az Intéző `/select` kapcsolójával rögtön ki is jelöli a fájlt. Ha a fájl még nem
+  létezik, a gomb kiírja az aktuális beállításokat, hogy legyen mit megnézni.
 * **Meglévő fájlok házirendje** (`Meglévő fájl:` legördülő, illetve `--meglevo` kapcsoló):
   * *kihagyás* – ami ott van, az kész (a régi viselkedés),
   * *méret-ellenőrzés* (alapértelmezett) – HEAD kéréssel összeveti a szerveri mérettel, és csak
@@ -187,7 +232,8 @@ PROBLEMAK: nincs
 
 1. **URL** és **célkönyvtár** megadása (az utóbbit a program megjegyzi).
 2. **Átvizsgálás** - minden találatot összegyűjt, majd ellenőrzi a meglévőket.
-3. A **talált kiterjesztések** panelen és a **fájllistában** a pipák igazítása.
+3. A **talált kiterjesztések** panelen (vagy a vele szinkronban lévő **Kiterjesztések**
+   mezőben) és a **fájllistában** a pipák igazítása.
 4. **Indítás** - a már meglévő, mégis kipipált fájloknál rákérdez a felülírásra.
 
 ## 8. Ismert korlátok

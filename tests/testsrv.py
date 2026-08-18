@@ -1,11 +1,16 @@
-"""Teszt HTTP szerver: Range, ETag, gzip, lassu es hibas vegpontokkal."""
+"""Teszt HTTP szerver: Range, ETag, gzip, lassu es hibas vegpontokkal.
+
+A GUI-tesztekhez itt van a beallitasfajl elkulonitese is (temp_settings).
+"""
 import gzip
 import hashlib
 import os
 import re
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 ROOT = "/home/claude/site"
 
@@ -142,6 +147,21 @@ class H(BaseHTTPRequestHandler):
                     time.sleep(H.stall)
             except (BrokenPipeError, ConnectionResetError):
                 return
+
+
+def temp_settings(letolto, name):
+    """A GUI-teszt sajat, ures beallitasfajlt kapjon a valodi helyett.
+
+    Enelkul minden futas a fejleszto (vagy az elozo teszt) beallitasait toltene
+    be es irna felul: a HTML-kapcsolo, a szalszam vagy a szuro atszivarogna a
+    kovetkezo tesztbe, es a hibak nehezen reprodukalhatova valnanak.
+    A run_gui() elott kell meghivni.
+    """
+    path = Path(tempfile.gettempdir()) / "letolto_teszt_beallitasok" / f"{name}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    letolto.SETTINGS_FILE = path
+    return path
 
 
 def serve(port=8765):

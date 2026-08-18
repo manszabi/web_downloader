@@ -10,8 +10,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import testsrv
-from letolto import (HTML_LABEL, NO_EXT_LABEL, DownloadManager, ScanConfig, Scanner,
-                     Status, ext_label, make_client, matching_extensions)
+from letolto import (HTML_LABEL, NO_EXT_LABEL, NONE_TOKEN, DownloadManager, Item,
+                     ScanConfig, Scanner, Status, choose_labels, ext_filter_text, ext_label,
+                     item_label, make_client, matching_extensions, parse_ext_filter,
+                     text_representable)
 
 srv = testsrv.serve(8805)
 BASE = "http://127.0.0.1:8805/"
@@ -125,6 +127,48 @@ check("a pipák megmaradtak",
       f"{sum(1 for i in mgr2.items.values() if i.selected)} kijelölt")
 check("a címkék is megmaradtak",
       all(i.label for i in mgr2.items.values()))
+
+print("\n--- 8. A szűrő szövegének értelmezése (mező <-> panel) ---")
+check("vessző, pont, nagybetű, üres tagok",
+      parse_ext_filter(" PDF, .zip ,, .Png ") == {"pdf", "zip", "png"},
+      str(parse_ext_filter(" PDF, .zip ,, .Png ")))
+check("csupa elválasztó = üres kérés", parse_ext_filter(" , ,, ") == set())
+check("üres kérés = minden, a html nélkül",
+      choose_labels(["pdf", "png", HTML_LABEL], set(), False) == {"pdf", "png"})
+check("üres kérés + html kapcsoló",
+      choose_labels(["pdf", HTML_LABEL], set(), True) == {"pdf", HTML_LABEL})
+check("ismeretlen kiterjesztés = üres kijelölés",
+      choose_labels(["pdf", "png"], {"docx"}, False) == set())
+check("nem létező címkét nem talál ki",
+      choose_labels(["pdf"], {"pdf", "zip"}, False) == {"pdf"})
+
+print("\n--- 9. Panel -> mező szöveg ---")
+check("a kipipáltak vesszővel", ext_filter_text(["pdf", "png"]) == "pdf, png")
+check("a html nem a mezőbe kerül", ext_filter_text(["pdf", HTML_LABEL]) == "pdf")
+check("üres kijelölésnek saját jelölése van", ext_filter_text([]) == NONE_TOKEN)
+check("csak html esetén is az", ext_filter_text([HTML_LABEL]) == NONE_TOKEN)
+check("a jelölés semmire nem illik",
+      choose_labels(["pdf", "png"], parse_ext_filter(NONE_TOKEN), False) == set())
+
+print("\n--- 10. Oda-vissza alakítás (a szinkron alapja) ---")
+for case in (["pdf"], ["pdf", "png"], [NO_EXT_LABEL], ["pdf", NO_EXT_LABEL], ["bin", "txt"]):
+    text = ext_filter_text(case)
+    back = choose_labels(case, parse_ext_filter(text), False)
+    check(f"{case} -> {text!r} -> vissza", back == set(case), str(back))
+
+print("\n--- 11. Vesszős utótag (a mező nem tudná kifejezni) ---")
+check("a címke tényleg tartalmazhat vesszőt", ext_label("http://a/b/adat.2024,csv") == "2024,csv")
+check("ilyet nem tekintünk kifejezhetőnek", not text_representable("2024,csv"))
+check("a mezőbe nem kerül bele", ext_filter_text(["pdf", "2024,csv"]) == "pdf")
+check("a szokásos címkék kifejezhetők",
+      all(text_representable(x) for x in ("pdf", NO_EXT_LABEL, HTML_LABEL)))
+
+print("\n--- 12. Régi állapotfájl: hiányzó címke pótlása ---")
+old_item = Item(url="http://a/b/regi.pdf", path="regi.pdf")      # label nélkül mentve
+check("a címke a címből is kiolvasható", item_label(old_item) == "pdf", item_label(old_item))
+check("a meglévő címke marad", item_label(Item(url="http://a/x", path="x", label="png")) == "png")
+check("kiterjesztés nélküli régi elem",
+      item_label(Item(url="http://a/b/regi", path="regi")) == NO_EXT_LABEL)
 
 print("\n=== OSSZEGZES: %d / %d ===" % (sum(R), len(R)))
 client.close()

@@ -29,6 +29,7 @@ print("kill utan .part:", parts)
 
 import tkinter as tk, letolto
 cap={}; ml=tk.Tk.mainloop; tk.Tk.mainloop=lambda s: cap.setdefault("a",s)
+cfg = testsrv.temp_settings(letolto, "osszeomlas")   # ne a valodi beallitasfajlt irjuk
 letolto.run_gui(); app=cap["a"]; tk.Tk.mainloop=ml
 app.v_dir.set(str(OUT))
 for _ in range(60): app.update(); time.sleep(0.03)   # ~1.8 s: a 800 ms-os kesleltetes lejar
@@ -66,8 +67,8 @@ check("minden fajl bitre ep", ok)
 
 # beallitasok megjegyzese
 app._on_close()
-cfg = Path.home()/".letolto_beallitasok.json"
 check("bezaraskor elmentette a beallitasokat", cfg.exists())
+check("nem maradt utana ideiglenes fajl", not cfg.with_suffix(".tmp").exists())
 if cfg.exists():
     import json; d=json.loads(cfg.read_text())
     check("a celkonyvtar is elmentodott", d.get("dir") == str(OUT), d.get("dir"))

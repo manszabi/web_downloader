@@ -10,6 +10,7 @@ import os
 import string
 import subprocess
 import sys
+import time
 import tempfile
 from pathlib import Path, PureWindowsPath
 
@@ -241,6 +242,95 @@ src_txt = source
 check("Windowson az %APPDATA% alá kerül", 'os.environ.get("APPDATA")' in src_txt)
 check("máshol a home könyvtárba", '.letolto_beallitasok.json' in src_txt)
 print("    ezen a gépen:", letolto.SETTINGS_FILE)
+
+# --------------------------------------------------- 8/b. Intezo-ablak a beallitasokra
+print("\n--- 8/b. „Beállítások mappája” gomb Windows-parancsa ---")
+from pathlib import PureWindowsPath
+
+real_windir = os.environ.get("WINDIR")
+os.environ["WINDIR"] = "C:\\Windows"
+spaced = PureWindowsPath(r"C:\Users\Kis Béla\AppData\Roaming\PyLetolto\beallitasok.json")
+cmd = letolto.explorer_select_command(spaced)
+print("   ", cmd)
+check("az idézőjel a /select, UTÁN áll (különben a Dokumentumokat nyitná meg)",
+      '/select,"C:\\Users\\Kis Béla\\' in cmd, cmd)
+check("nem az egész paraméter van idézőjelben", '"/select,' not in cmd, cmd)
+check("az explorer.exe teljes úttal indul (nem a munkakönyvtárból)",
+      cmd.startswith('"C:\\Windows\\explorer.exe"'), cmd)
+os.environ["WINDIR"] = "D:\\Win\\"
+check("a %WINDIR% záró jelét is kezeli",
+      letolto.explorer_select_command(PureWindowsPath(r"C:\a\b.json")).startswith(
+          '"D:\\Win\\explorer.exe"'), letolto.explorer_select_command(PureWindowsPath("C:/a")))
+del os.environ["WINDIR"]
+check("%WINDIR% nélkül is épkézláb parancs",
+      letolto.explorer_select_command(PureWindowsPath(r"C:\a\b.json")).startswith(
+          '"C:\\Windows\\explorer.exe"'))
+if real_windir is not None:
+    os.environ["WINDIR"] = real_windir
+
+# A tenyleges inditas: Windowson egyetlen sztringkent kell atadni (nincs cmd.exe).
+TMP.mkdir(parents=True, exist_ok=True)
+probe = TMP / "beallitasok.json"
+probe.write_text("{}", encoding="utf-8")
+launched = []
+real_popen = subprocess.Popen
+opened_dirs = []
+real_open = letolto.open_in_file_manager
+
+
+class FakeProc:
+    """A spawn_detached poll()-t hiv a korabbi folyamatokra."""
+
+    def poll(self):
+        return 0
+
+
+def fake_popen(*a, **k):
+    launched.append((a, k))
+    return FakeProc()
+
+
+subprocess.Popen = fake_popen
+letolto.open_in_file_manager = lambda path: opened_dirs.append(Path(path))
+try:
+    letolto.sys.platform = "win32"
+    letolto.reveal_in_file_manager(probe)
+    letolto.reveal_in_file_manager(TMP / "nincs_ilyen.json")     # hiányzó fájl
+finally:
+    letolto.sys.platform = real_platform
+    subprocess.Popen = real_popen
+    letolto.open_in_file_manager = real_open
+    letolto._spawned.clear()
+check("meglévő fájlnál elindítja az Intézőt", len(launched) == 1, str(launched))
+check("egyetlen sztringként adja át (a lista alak elrontaná az idézőjeleket)",
+      launched and isinstance(launched[0][0][0], str), str(launched[:1]))
+check("shell nélkül indul", launched and not launched[0][1].get("shell"), str(launched[:1]))
+check("hiányzó fájlnál a mappát nyitja meg",
+      opened_dirs == [TMP], str(opened_dirs))
+
+# ------------------------------------------------- 8/c. kulso program inditasa
+print("\n--- 8/c. Külső program indítása (nem marad zombi, nincs kimeneti zaj) ---")
+check("elnyeli a külső program kimenetét",
+      "stdout=subprocess.DEVNULL" in src_txt and "stderr=subprocess.DEVNULL" in src_txt)
+check("saját munkamenetben indul (a Ctrl+C nem üti le)",
+      "start_new_session=True" in src_txt)
+letolto.spawn_detached([sys.executable, "-c", ""])
+first = letolto._spawned[-1]
+time.sleep(0.8)                               # ennyi alatt biztosan befejeződik
+letolto.spawn_detached([sys.executable, "-c", ""])
+check("a befejezett folyamatot begyűjti (nem marad zombi)",
+      first.returncode is not None and first not in letolto._spawned,
+      f"returncode={first.returncode}, nyilvántartva={len(letolto._spawned)}")
+check("csak a még futók maradnak nyilvántartva", len(letolto._spawned) <= 1,
+      str(len(letolto._spawned)))
+letolto._spawned[-1].wait(timeout=10)
+letolto._spawned.clear()
+
+# ------------------------------------------------- 8/d. beallitasok mentese
+print("\n--- 8/d. A beállításfájl mentése atomi ---")
+check("ideiglenes fájlba ír, és csak utána cserél", "atomic_replace(tmp, SETTINGS_FILE)" in src_txt)
+check("az atomi csere Windowson újrapróbálkozik", "def atomic_replace" in src_txt
+      and "PermissionError" in src_txt)
 
 # --------------------------------------------------------------- 9. bat fajl
 print("\n--- 9. Az indito .bat ellenőrzése ---")
