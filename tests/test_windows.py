@@ -8,6 +8,7 @@ ellenorizzuk.
 import io
 import os
 import ntpath
+import shutil
 import string
 import subprocess
 import sys
@@ -344,6 +345,30 @@ letolto._spawned.clear()
 
 # ------------------------------------------------- 8/d. beallitasok mentese
 print("\n--- 8/d. A beállításfájl mentése atomi ---")
+print("\n--- 8/e. A celmappa athordozhato masik rendszerre ---")
+# Windowson mentett allapotfajl mas rendszeren: a "\\" nem lehet fajlnev resze.
+import json as _json
+HORD = TMP / "hordozhato"
+shutil.rmtree(HORD, ignore_errors=True)
+HORD.mkdir(parents=True)
+(HORD / letolto.STATE_FILE).write_text(_json.dumps({"version": 2, "items": {
+    "http://pelda.hu/x/f.bin": {"url": "http://pelda.hu/x/f.bin",
+                                "path": "pelda.hu\\x\\f.bin", "total": 10,
+                                "done": 10, "status": "kész", "selected": False}}}),
+    encoding="utf-8")
+_mgr = letolto.DownloadManager(HORD, 1)
+_mgr.load_state()
+_elem = next(iter(_mgr.items.values()))
+check("a regi, visszaperjeles ut betoltve mappakra bomlik", _elem.path == "pelda.hu/x/f.bin",
+      repr(_elem.path))
+check("a celfajl tenyleg mappaban van", (HORD / _elem.path).parent != HORD,
+      str(HORD / _elem.path))
+_uj = letolto.DownloadManager(HORD / "uj", 1)
+_uj.add_urls(["http://pelda.hu/mappa/alkonyvtar/a.bin"])
+check("az uj utak is / elvalasztoval keszulnek",
+      "\\" not in next(iter(_uj.items.values())).path,
+      repr(next(iter(_uj.items.values())).path))
+
 gui_txt = repo_file("letolto_gui.py").read_text(encoding="utf-8")
 check("ideiglenes fájlba ír, és csak utána cserél",
       "core.atomic_replace(tmp, core.SETTINGS_FILE)" in gui_txt)

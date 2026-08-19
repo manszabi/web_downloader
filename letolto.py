@@ -968,7 +968,12 @@ class Item:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Item:      # a JSON-ból bármi jöhet
-        return cls(url=raw["url"], path=raw["path"], total=int(raw.get("total", 0)),
+        # A régi, Windowson mentett állapotfájlban "\\" az elválasztó. Máshol ez
+        # nem útvonal, hanem egyetlen, visszaperjeles fájlnév lenne, tehát a
+        # meglévő fájlok "eltűnnének", és a program létre is hozná a furcsa nevű
+        # másolatukat. A fájlnevekben a "\\" amúgy is tiltott (lásd safe_component).
+        return cls(url=raw["url"], path=str(raw["path"]).replace("\\", "/"),
+                   total=int(raw.get("total", 0)),
                    done=int(raw.get("done", 0)),
                    status=raw.get("status", Status.PENDING),
                    validator=raw.get("validator"), error=raw.get("error", ""),
@@ -1135,14 +1140,17 @@ class DownloadManager:
         ott ugyanaz a fájl lenne.
         """
         rel = fit_path(self.outdir, url_to_relpath(url))
-        key = str(rel)
+        # Mindig "/" az elválasztó, Windowson is: így a célmappa a benne lévő
+        # állapotfájllal együtt átvihető másik rendszerre. A Windows a "/"-t
+        # ugyanúgy elfogadja útvonal-elválasztónak, mint a visszaperjelet.
+        key = rel.as_posix()
         if key.casefold() not in self._used_paths:
             self._used_paths.add(key.casefold())
             return key
         alt = fit_path(self.outdir,
-                       rel.with_name(f"{rel.stem}_{_short_hash(url)}{rel.suffix}"))
-        self._used_paths.add(str(alt).casefold())
-        return str(alt)
+                       rel.with_name(f"{rel.stem}_{_short_hash(url)}{rel.suffix}")).as_posix()
+        self._used_paths.add(alt.casefold())
+        return alt
 
     def add_urls(self, urls: Iterable[str], *, labels: dict[str, str] | None = None,
                  selected: bool = True) -> int:

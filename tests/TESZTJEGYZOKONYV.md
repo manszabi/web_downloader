@@ -314,6 +314,8 @@ Mérésekkel, nem szemre. Minden szám ugyanazon a gépen készült, a `tests/te
 | 34 | Az automatikus mentés fix 3 másodpercenként írta ki a **teljes** listát | 20 000 elemnél mentésenként ~200 ms processzoridő és 4,5 MB írás, vagyis tartósan 6,5% CPU és 1,5 MB/s felesleges lemezírás | a mentés üteme mostantól a lista méretéhez igazodik (3 s -> legfeljebb 30 s); letöltött bájt így sem vész el, mert a haladást a `.part` fájlok hordozzák |
 | 35 | `NET_CHUNK` és `FILE_BUFFER`: két név ugyanarra az értékre | ugyanaz a minta, mint a 26. pontban | a `NET_CHUNK` törölve |
 
+| 36 | Az állapotfájl a rendszer szerinti elválasztóval tárolta az útvonalat | Windowson mentett célmappát máshol megnyitva a `pelda.hu\\x\\f.bin` **egyetlen fájlnév** lett: a meglévő fájlok eltűntek, és a program létre is hozta a visszaperjeles nevű másolatukat | mostantól mindenhol `/` az elválasztó, a régi bejegyzéseket betöltéskor alakítjuk át |
+
 Amit **megmértünk, és nem kellett javítani**: a `httpx.iter_bytes()` alapból ~60 KB-os
 darabokat ad (5 MB = 84 darab), és kézzel 256 KB-ra összefűzve *lassabb* lett (15,9 ms ->
 25,9 ms), ezért a darabolás maradt. A `_run` felügyelő ciklusa `time.sleep` helyett most
