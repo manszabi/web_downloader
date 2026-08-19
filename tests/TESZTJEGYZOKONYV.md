@@ -295,3 +295,26 @@ kerul bele.
 
 A futas ideje: Linuxon ~2,5 perc, Windowson ~2,5 perc; a lint (`ruff` + szigoru
 `mypy`) 20 masodperc.
+
+
+## 11. Verseny-, memoria- es processzoridő-vizsgálat (2026-08)
+
+Mérésekkel, nem szemre. Minden szám ugyanazon a gépen készült, a `tests/test_hatekonysag.py`
+és a `tests/test_gui_valogatas.py` rögzíti őket ellenőrzésként.
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 27 | A `StateStore.save()` a szótárat a kezelő zárja nélkül járta be | Letöltés közbeni átvizsgálásnál `RuntimeError: dictionary changed size during iteration`, ami a mentő szálat **megölte** – onnantól a futás végéig egyetlen automatikus mentés sem készült | reprodukció: párhuzamos bővítés mellett 100%-ban előjött |
+| 28 | Az `_autosave` ciklusa őrizetlen volt | Bármely mentési hiba némán megszüntette a mentéseket | ugyanaz a szál, most naplóz és folytatja |
+| 29 | Az állapotfájl `os.replace`-szel cserélődött, nem `atomic_replace`-szel | Windowson egy pillanatnyi zárolás (víruskereső, indexelő) elvesztette a **záró** mentést, ahol már nincs újrapróbálkozás | a beállításfájl már helyesen csinálta – inkonzisztencia |
+| 30 | Az `.part` fájl csak `flush()`-t kapott, `fsync`-et nem | A README áramszünetet ígért, de a `flush()` csak az operációs rendszer gyorsítótáráig visz. Mérve: 100 MB kiírása 38 ms `fsync` nélkül, 345 ms vele – hálózati sebesség mellett elenyésző | `os.fsync` a periodikus ürítésben |
+| 31 | A `_toggle_files` fájlonként hívta a `set_selected`-et, ami minden hívásnál újraszámolta az összesítőt | **1000 kijelölt sor húszezres listánál 4,4 másodpercre megfagyasztotta a felületet** | mérés: 4394 ms -> 4,6 ms kötegelve (956x) |
+| 32 | Az `_update_count` végigjárta a listát | Körönként 0,8 ms 20 000 elemnél, másodpercenként hatszor – az összesítő már tudta a választ | mérés: 0,77 ms/hívás |
+| 33 | Az `_on_scanned` kiterjesztésenként hívta az `add_urls`-t (és így a lemezre mentést) | Tíz kiterjesztésnél tíz teljes állapotmentés (~40 MB írás) és húsz végigjárás | mérés: 1309 ms -> 745 ms |
+| 34 | Az automatikus mentés fix 3 másodpercenként írta ki a **teljes** listát | 20 000 elemnél mentésenként ~200 ms processzoridő és 4,5 MB írás, vagyis tartósan 6,5% CPU és 1,5 MB/s felesleges lemezírás | a mentés üteme mostantól a lista méretéhez igazodik (3 s -> legfeljebb 30 s); letöltött bájt így sem vész el, mert a haladást a `.part` fájlok hordozzák |
+| 35 | `NET_CHUNK` és `FILE_BUFFER`: két név ugyanarra az értékre | ugyanaz a minta, mint a 26. pontban | a `NET_CHUNK` törölve |
+
+Amit **megmértünk, és nem kellett javítani**: a `httpx.iter_bytes()` alapból ~60 KB-os
+darabokat ad (5 MB = 84 darab), és kézzel 256 KB-ra összefűzve *lassabb* lett (15,9 ms ->
+25,9 ms), ezért a darabolás maradt. A `_run` felügyelő ciklusa `time.sleep` helyett most
+`Event.wait`-tel vár, így a Leállítás nem késik egy teljes kört.

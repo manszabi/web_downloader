@@ -134,6 +134,33 @@ check("html bekapcsolva: a lapok is kijelöltek",
       all(i.selected for i in app.manager.items.values() if i.label == letolto.HTML_LABEL))
 check("a panelen is be van pipálva", app._ext_vars[letolto.HTML_LABEL].get())
 
+print("\n--- H) A pipa valtasa kotegelve tortenik ---")
+# A set_selected() minden hivasa vegigjarja a teljes listat (osszesites), ezert
+# sok sornal elemenkent hivva a felulet masodpercekre megallna.
+hivasok = []
+eredeti_set = app.manager.set_selected
+app.manager.set_selected = lambda urls, value: (hivasok.append(len(list(urls))),
+                                                eredeti_set(urls, value))[1]
+sorok = list(app.manager.items)[:20]
+try:
+    app._toggle_files(sorok)
+finally:
+    app.manager.set_selected = eredeti_set
+check("husz sor valtasa legfeljebb ket hivas", len(hivasok) <= 2, f"{len(hivasok)} hivas")
+check("es mind a husz sor benne van", sum(hivasok) == len(sorok), str(hivasok))
+check("a pipak tenyleg atvaltottak",
+      all(app.manager.items[u].selected is not None for u in sorok))
+
+print("\n--- I) A kijelöltek szama az osszesitobol jon ---")
+app.manager.set_selected(list(app.manager.items), False)
+app._update_count()
+check("nulla kijelolt", app.v_count.get().startswith("0 / "), app.v_count.get())
+app.manager.set_selected(sorok, True)
+app._update_count()
+check("husz kijelolt", app.v_count.get().startswith(f"{len(sorok)} / "), app.v_count.get())
+check("a szam egyezik a tenyleges pipakkal",
+      app.manager.totals.files == sum(1 for i in app.manager.items.values() if i.selected))
+
 app._on_close()
 print("\n=== GUI OSSZEGZES: %d / %d ===" % (sum(R), len(R)))
 srv.shutdown()

@@ -51,7 +51,9 @@ pip install -e ".[fejlesztes]"
 validátorral: ha a fájl közben megváltozott a szerveren, a letöltés tisztán újraindul
 ahelyett, hogy két verzió darabjai állnának össze. Áramszünet vagy programösszeomlás után
 legfeljebb néhány másodpercnyi letöltés vész el, és a program indításkor magától felkínálja
-a folytatást.
+a folytatást. A részfájl ötmásodpercenként `fsync`-cel a lemezre is kikerül, nem csak az
+operációs rendszer gyorsítótárába – így nem csak a program összeomlását, hanem az áramszünetet
+is túléli.
 
 **Válogatás.** Az átvizsgálás minden találatot összegyűjt, és megmutatja a talált
 kiterjesztéseket darabszámmal. Kipipálod, mi kell — csoportosan vagy fájlonként. A **Talált
@@ -124,12 +126,13 @@ python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
 python tests/test_naplo.py         python tests/test_gui_robots.py
+python tests/test_hatekonysag.py
 ```
 
 Minden feltöltésnél GitHub Actions is lefuttatja őket, **Linuxon és Windowson**, Python 3.11
 és 3.13 alatt, a `ruff` és a szigorú `mypy` mellé (`.github/workflows/ellenorzes.yml`).
 
-Jelenlegi állás: **410 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
+Jelenlegi állás: **428 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
 első futásai három valódi, Linuxot feltételező tesztbeli hibát hoztak felszínre, lásd a
 jegyzőkönyv 10. pontját). A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.

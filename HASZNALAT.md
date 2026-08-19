@@ -117,6 +117,7 @@ python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
 python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
 python test_naplo.py        python test_gui_robots.py
+python test_hatekonysag.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi

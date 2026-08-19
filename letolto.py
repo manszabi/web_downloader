@@ -58,9 +58,11 @@ log = logging.getLogger("letolto")
 # --------------------------------------------------------------------------- #
 
 USER_AGENT: Final = f"PyLetolto/{__version__} (+https://example.invalid)"
-NET_CHUNK: Final = 256 * 1024          # írási puffer alapmérete
-FILE_BUFFER: Final = NET_CHUNK         # mérve ez a leggyorsabb és kevés adat vész
+FILE_BUFFER: Final = 256 * 1024        # írási puffer: mérve ez a leggyorsabb
 FLUSH_SECONDS: Final = 5.0             # el összeomláskor (lásd a README mérését)
+AUTOSAVE_SECONDS: Final = 3.0          # az állapotmentés alapüteme
+AUTOSAVE_MAX_SECONDS: Final = 30.0     # ennél ritkábban a legnagyobb listánál sem
+AUTOSAVE_PER_ITEM: Final = 0.0005      # elemenkénti ráadás (20 000 elem -> 13 mp)
 STATE_FILE: Final = "_letoltes_allapot.json"
 def _settings_path() -> Path:
     """Windowson a %APPDATA%, máshol a home könyvtár a szokásos hely."""
@@ -1005,16 +1007,21 @@ class StateStore:
     def save(self, items: dict[str, Item], force: bool = False) -> None:
         if not (self._dirty or force):
             return
+        # A pillanatkép egyetlen C-szintű művelet, tehát oszthatatlan: enélkül egy
+        # párhuzamos bővítés (átvizsgálás letöltés közben) "dictionary changed size
+        # during iteration" hibával szakítaná félbe a mentést - és mivel ez a mentő
+        # szálon történik, onnantól *egyáltalán* nem készülne mentés.
+        pillanatkep = list(items.items())
         payload = {"version": STATE_VERSION,
                    "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                   "items": {url: item.as_dict() for url, item in items.items()}}
+                   "items": {url: item.as_dict() for url, item in pillanatkep}}
         data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         with self._lock:
             try:
                 self.outdir.mkdir(parents=True, exist_ok=True)
                 tmp = self.path.with_suffix(".tmp")
                 tmp.write_text(data, encoding="utf-8")
-                os.replace(tmp, self.path)          # atomi csere
+                atomic_replace(tmp, self.path)      # atomi csere, Windowson újrapróbálva
                 self._dirty = False
             except OSError as exc:
                 log.warning("Állapot mentése sikertelen: %s", exc)
@@ -1272,20 +1279,33 @@ class DownloadManager:
                 self._scale_workers()
                 with self._lock:
                     finished = not self._todo and self._active == 0
-                if finished:
+                if finished or self._stop.wait(SUPERVISOR_TICK):
                     break
-                time.sleep(SUPERVISOR_TICK)
             for worker in list(self._pool):        # a futó fájlok befejezése/leállása
                 worker.join(timeout=30)
         finally:
             self.store.save(self.items, force=True)
             self.on_event("finished", None)
 
+    def _autosave_interval(self) -> float:
+        """A mentés üteme a lista méretéhez igazodik.
+
+        Húszezer elemnél egy mentés ~200 ms processzoridő és ~4,5 MB írás; ezt
+        három másodpercenként megismételni pazarlás. Kevesebb mentéssel sem vész
+        el letöltött bájt: a haladást a ``.part`` fájlok hordozzák, a méretüket a
+        következő indulás úgyis a lemezről olvassa vissza.
+        """
+        return min(AUTOSAVE_MAX_SECONDS,
+                   AUTOSAVE_SECONDS + len(self.items) * AUTOSAVE_PER_ITEM)
+
     def _autosave(self) -> None:
         while self.running:
-            if self._stop.wait(3.0):
+            if self._stop.wait(self._autosave_interval()):
                 break
-            self.store.save(self.items)
+            try:
+                self.store.save(self.items)
+            except Exception as exc:      # a mentő szál soha ne haljon el némán
+                log.warning("Automatikus állapotmentés sikertelen: %s", exc)
 
     # -- egy fájl ---------------------------------------------------------
     def _remote_size(self, url: str) -> int | None:
@@ -1446,7 +1466,8 @@ class DownloadManager:
                     now = time.monotonic()
                     if now - last_flush > FLUSH_SECONDS:
                         last_flush = now
-                        fh.flush()          # áramszünetkor is csak pár másodperc vész el
+                        fh.flush()          # a Python pufferéből az operációs rendszerhez
+                        os.fsync(fh.fileno())   # onnan a lemezre: áramszünet is túlélhető
                     if now - last_ui > UI_ITEM_THROTTLE:
                         last_ui = now
                         self._emit(item)
