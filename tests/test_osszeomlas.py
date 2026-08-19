@@ -10,17 +10,19 @@ OUT = Path(tempfile.gettempdir()) / "letolto_osszeomlas"
 shutil.rmtree(OUT, ignore_errors=True)
 R=[]
 def check(n, ok, i=""):
-    R.append(ok); print(("[OK]   " if ok else "[HIBA] ")+n+(f"  -> {i}" if i else ""))
+    R.append(bool(ok)); print(("[OK]   " if ok else "[HIBA] ")+n+(f"  -> {i}" if i else ""))
 
 WORKER = Path(tempfile.gettempdir()) / "_letolto_crash_worker.py"
+# Az utak repr-rel kerulnek a generalt szkriptbe: Windowson a "C:\\Users\\..."
+# barmilyen idezojelben "\\U" escape-nek latszana, es szintaktikai hibat adna.
 WORKER.write_text(f"""
 import sys, time
-sys.path[:0] = [r"{_HERE}", r"{_HERE.parent}"]
+sys.path[:0] = [{str(_HERE)!r}, {str(_HERE.parent)!r}]
 from letolto import DownloadManager
-m = DownloadManager("{OUT}", 2); m.load_state()
+m = DownloadManager({str(OUT)!r}, 2); m.load_state()
 m.add_urls(["http://127.0.0.1:8791/huge/nolink","http://127.0.0.1:8791/files/a.bin","http://127.0.0.1:8791/files/b.bin"])
 m.start(); time.sleep(60)
-""")
+""", encoding="utf-8")
 testsrv.H.stall = 0.05
 p = subprocess.Popen([sys.executable, str(WORKER)]); time.sleep(4); p.kill(); p.wait()
 testsrv.H.stall = 0
@@ -70,7 +72,7 @@ app._on_close()
 check("bezaraskor elmentette a beallitasokat", cfg.exists())
 check("nem maradt utana ideiglenes fajl", not cfg.with_suffix(".tmp").exists())
 if cfg.exists():
-    import json; d=json.loads(cfg.read_text())
+    import json; d=json.loads(cfg.read_text(encoding="utf-8"))
     check("a celkonyvtar is elmentodott", d.get("dir") == str(OUT), d.get("dir"))
 
 # ujraindulas: emlekszik-e a konyvtarra es tolt-e magatol

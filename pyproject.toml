@@ -1,0 +1,69 @@
+# A csomag leírása. A program továbbra is futtatható telepítés nélkül
+# ("python letolto.py"), ez a fájl csak a telepítés lehetőségét adja hozzá:
+#
+#     pipx install .        vagy      pip install .
+#     letolto --no-gui -o ./letoltesek https://pelda.hu
+[build-system]
+requires = ["setuptools>=77"]   # a PEP 639 licencmezőkhöz
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyletolto"
+description = "Weboldal-fájlletöltő: többszálú, megszakítható és folytatható, GUI-val"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "manszabi" }]
+keywords = ["letöltő", "downloader", "crawler", "httpx", "tkinter"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Hungarian",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = ["httpx>=0.28"]
+# A verzió egyetlen helyen él, a letolto.py-ban: a csomag onnan olvassa ki.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/manszabi/web_downloader"
+
+[project.scripts]
+letolto = "letolto:main"          # parancssori indítás
+
+[project.gui-scripts]
+letolto-gui = "letolto:main"      # Windowson konzolablak nélkül indul
+
+[project.optional-dependencies]
+# Fejlesztéshez:  pip install -e ".[fejlesztes]"
+fejlesztes = ["ruff>=0.14", "mypy>=1.18", "pytest>=8"]
+
+[tool.setuptools]
+py-modules = ["letolto", "letolto_gui"]
+
+[tool.setuptools.dynamic]
+version = { attr = "letolto.__version__" }
+
+[tool.pytest.ini_options]
+# A tesztek önálló szkriptek; a pytest a futtató fájlt gyűjti be, az indítja őket.
+# Így a "python tests/test_robots.py" és a "pytest -k robots" is működik.
+testpaths = ["tests"]
+python_files = ["futtato.py"]
+python_functions = ["test_*"]
+addopts = "-q"
+
+[tool.mypy]
+# Szigorú típusellenőrzés a programra. A tesztek szándékosan lazább,
+# egyfájlos szkriptek, ezért ők kimaradnak - ahogy a ruffnál is.
+python_version = "3.11"
+strict = true
+files = ["letolto.py", "letolto_gui.py"]
+exclude = "^tests/"

@@ -100,7 +100,16 @@ python letolto.py --no-gui -o C:\letoltesek          # csak a félbemaradtak fol
 Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 `--meglevo {kihagyás,méret-ellenőrzés,újratöltés}`, `-t/--threads`, `-d/--depth`.
 
+## Fájlok
+
+A program két fájlból áll: a `letolto.py` a mag (átvizsgálás, letöltés, parancssor), a
+`letolto_gui.py` a felület. Indítani mindig a `letolto.py`-t kell – a felületet az hívja be,
+amikor szükség van rá. Így a parancssori mód olyan gépen is elfut, ahol nincs tkinter.
+
 ## Tesztek
+
+`pytest` a repó gyökeréből mindet lefuttatja (`pytest -k robots` egyetlen csoportot).
+Külön-külön is indíthatók:
 
 ```
 python test_letolto.py      python test_valogatas.py    python test_meglevo.py
@@ -108,6 +117,7 @@ python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
 python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
 python test_naplo.py        python test_gui_robots.py
+python test_hatekonysag.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi

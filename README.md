@@ -1,5 +1,7 @@
 # web_downloader
 
+[![ellenőrzés](https://github.com/manszabi/web_downloader/actions/workflows/ellenorzes.yml/badge.svg)](https://github.com/manszabi/web_downloader/actions/workflows/ellenorzes.yml)
+
 Weboldal-fájlletöltő grafikus felülettel: **többszálú**, **megszakítható és folytatható**,
 és átvizsgálás után kiválogathatod, mi kell.
 
@@ -24,6 +26,22 @@ python letolto.py
 
 Python **3.11** vagy újabb szükséges.
 
+### Telepítés parancsként (nem kötelező)
+
+Ha nem a repóból akarod indítani, telepíthető is – ekkor a `letolto` parancs bárhonnan
+elérhető lesz (a `letolto-gui` Windowson konzolablak nélkül indul):
+
+```bash
+pipx install .          # vagy: pip install .
+letolto --no-gui -o ./letoltesek https://pelda.hu
+```
+
+Fejlesztéshez a lint, a típusellenőrzés és a tesztek egy lépésben:
+
+```bash
+pip install -e ".[fejlesztes]"
+```
+
 ---
 
 ## Mit tud
@@ -33,7 +51,9 @@ Python **3.11** vagy újabb szükséges.
 validátorral: ha a fájl közben megváltozott a szerveren, a letöltés tisztán újraindul
 ahelyett, hogy két verzió darabjai állnának össze. Áramszünet vagy programösszeomlás után
 legfeljebb néhány másodpercnyi letöltés vész el, és a program indításkor magától felkínálja
-a folytatást.
+a folytatást. A részfájl ötmásodpercenként `fsync`-cel a lemezre is kikerül, nem csak az
+operációs rendszer gyorsítótárába – így nem csak a program összeomlását, hanem az áramszünetet
+is túléli.
 
 **Válogatás.** Az átvizsgálás minden találatot összegyűjt, és megmutatja a talált
 kiterjesztéseket darabszámmal. Kipipálod, mi kell — csoportosan vagy fájlonként. A **Talált
@@ -74,9 +94,11 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 
 | Fájl | Mi ez |
 |---|---|
-| `letolto.py` | maga a program (GUI + parancssor) |
+| `letolto.py` | a program magja: átvizsgálás, letöltés, parancssori mód – ez az indítandó fájl |
+| `letolto_gui.py` | a grafikus felület (tkinter); a mag lustán importálja, csak GUI módban |
 | `inditas.bat` | Windows-indító, függőség-ellenőrzéssel |
 | `HASZNALAT.md` | rövid használati útmutató |
+| `pyproject.toml` | csomagleírás: ebből lesz a telepíthető `letolto` parancs |
 | `ruff.toml` | a lint rögzített beállításai (a program futtatásához nem kell) |
 | `tests/` | tesztek és a hozzájuk tartozó helyi kiszolgáló (a futtatáshoz nem kellenek) |
 | `tests/TESZTJEGYZOKONYV.md` | a fejlesztés során talált hibák, mérések, ismert korlátok |
@@ -84,6 +106,17 @@ Kapcsolók: `--html`, `--any-host`, `--ignore-robots`, `--robots-5xx-stop`,
 ---
 
 ## Tesztek
+
+A teljes csomag egy paranccsal, pytesttel:
+
+```bash
+pip install pytest
+pytest                 # minden teszt
+pytest -k robots       # csak a robots.txt tesztjei
+pytest -k "not gui"    # ablak nélkül (kiszolgálón)
+```
+
+A szkriptek külön-külön is futtathatók, pytest nélkül:
 
 ```bash
 python tests/test_letolto.py       python tests/test_valogatas.py
@@ -93,9 +126,15 @@ python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
 python tests/test_naplo.py         python tests/test_gui_robots.py
+python tests/test_hatekonysag.py
 ```
 
-Jelenlegi állás: **410 teszt, mind sikeres**. A GUI-tesztek valódi ablakot nyitnak.
+Minden feltöltésnél GitHub Actions is lefuttatja őket, **Linuxon és Windowson**, Python 3.11
+és 3.13 alatt, a `ruff` és a szigorú `mypy` mellé (`.github/workflows/ellenorzes.yml`).
+
+Jelenlegi állás: **431 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
+első futásai három valódi, Linuxot feltételező tesztbeli hibát hoztak felszínre, lásd a
+jegyzőkönyv 10. pontját). A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.
 
 ---

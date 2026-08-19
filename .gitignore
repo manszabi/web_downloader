@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 .venv/
 
+# Csomagolás
+build/
+dist/
+*.egg-info/
+
 # A program futás közben keletkező fájljai
 _letoltes_allapot.json
 *.part

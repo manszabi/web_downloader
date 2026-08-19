@@ -8,6 +8,7 @@ ellenorizzuk.
 import io
 import os
 import ntpath
+import shutil
 import string
 import subprocess
 import sys
@@ -36,7 +37,7 @@ TMP = Path(tempfile.gettempdir()) / "letolto_win"
 
 
 def check(name, ok, info=""):
-    R.append(ok)
+    R.append(bool(ok))
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
@@ -239,10 +240,17 @@ finally:
     letolto.sys.platform = real_platform
     if real_windll is None:
         del ctypes.windll
+    else:
+        ctypes.windll = real_windll     # valodi Windowson ne maradjon a hamis
 check("Windowson meghívja a DPI-beállítást", called["n"] == 1 and called.get("value") == 1,
       str(called))
+
 called["n"] = 0
-letolto.enable_dpi_awareness()          # most mar Linux
+letolto.sys.platform = "linux"          # a nem Windows agat is szimulalni kell:
+try:                                    # valodi Windowson kulonben tenyleg hivna
+    letolto.enable_dpi_awareness()
+finally:
+    letolto.sys.platform = real_platform
 check("más rendszeren nem hívja meg", called["n"] == 0)
 
 # --------------------------------------------------------------- 8. beallitasfajl
@@ -337,7 +345,33 @@ letolto._spawned.clear()
 
 # ------------------------------------------------- 8/d. beallitasok mentese
 print("\n--- 8/d. A beállításfájl mentése atomi ---")
-check("ideiglenes fájlba ír, és csak utána cserél", "atomic_replace(tmp, SETTINGS_FILE)" in src_txt)
+print("\n--- 8/e. A celmappa athordozhato masik rendszerre ---")
+# Windowson mentett allapotfajl mas rendszeren: a "\\" nem lehet fajlnev resze.
+import json as _json
+HORD = TMP / "hordozhato"
+shutil.rmtree(HORD, ignore_errors=True)
+HORD.mkdir(parents=True)
+(HORD / letolto.STATE_FILE).write_text(_json.dumps({"version": 2, "items": {
+    "http://pelda.hu/x/f.bin": {"url": "http://pelda.hu/x/f.bin",
+                                "path": "pelda.hu\\x\\f.bin", "total": 10,
+                                "done": 10, "status": "kész", "selected": False}}}),
+    encoding="utf-8")
+_mgr = letolto.DownloadManager(HORD, 1)
+_mgr.load_state()
+_elem = next(iter(_mgr.items.values()))
+check("a regi, visszaperjeles ut betoltve mappakra bomlik", _elem.path == "pelda.hu/x/f.bin",
+      repr(_elem.path))
+check("a celfajl tenyleg mappaban van", (HORD / _elem.path).parent != HORD,
+      str(HORD / _elem.path))
+_uj = letolto.DownloadManager(HORD / "uj", 1)
+_uj.add_urls(["http://pelda.hu/mappa/alkonyvtar/a.bin"])
+check("az uj utak is / elvalasztoval keszulnek",
+      "\\" not in next(iter(_uj.items.values())).path,
+      repr(next(iter(_uj.items.values())).path))
+
+gui_txt = repo_file("letolto_gui.py").read_text(encoding="utf-8")
+check("ideiglenes fájlba ír, és csak utána cserél",
+      "core.atomic_replace(tmp, core.SETTINGS_FILE)" in gui_txt)
 check("az atomi csere Windowson újrapróbálkozik", "def atomic_replace" in src_txt
       and "PermissionError" in src_txt)
 

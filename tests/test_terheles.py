@@ -14,6 +14,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(_HERE), str(_HERE.parent)]
 import tempfile
 TMP = Path(tempfile.gettempdir()) / "letolto_terheles"
+import kozos
 import testsrv
 from letolto import DownloadManager, Item, Status, human, make_client
 
@@ -23,7 +24,7 @@ R = []
 
 
 def check(name, ok, info=""):
-    R.append(ok)
+    R.append(bool(ok))
     print(("[OK]   " if ok else "[HIBA] ") + name + (f"  -> {info}" if info else ""))
 
 
@@ -35,9 +36,8 @@ def fresh(name):
 
 
 def rss():
-    for line in open("/proc/self/status"):
-        if line.startswith("VmRSS"):
-            return int(line.split()[1]) / 1024
+    """Pillanatnyi memoriahasznalat MB-ban; ahol nem merheto, ott 0.0."""
+    return kozos.rss_mb() or 0.0
 
 
 def md5f(p):
@@ -62,7 +62,10 @@ dt = time.perf_counter() - t0
 after = rss()
 per = (after - before) * 1024 / 20_000
 print(f"    {dt:.2f}s, +{after - before:.1f} MB  (~{per:.0f} KB/elem)")
-check("20 000 elem < 40 MB", after - before < 40, f"+{after - before:.1f} MB")
+if kozos.merheto():
+    check("20 000 elem < 40 MB", after - before < 40, f"+{after - before:.1f} MB")
+else:
+    print("    (ezen a rendszeren nem merheto a memoria, az ellenorzes kimarad)")
 check("nyilvantartasba vetel < 5 s", dt < 5, f"{dt:.2f}s")
 
 t0 = time.perf_counter()
@@ -112,16 +115,17 @@ check("12 megszakitas utan is bitre ep a fajl", dest.exists() and md5f(dest) == 
 # ---------------------------------------------------- 3. osszeomlas (kill -9)
 print("\n--- 3. Osszeomlas-szimulacio (kill -9 letoltes kozben) ---")
 OUT = fresh("s_c")
+# Az utak es az URL repr-rel: Windowson a nyers "C:\\Users\\..." escape-nek latszana.
 worker = f"""
 import sys, time
-sys.path[:0] = [r"{_HERE}", r"{_HERE.parent}"]
+sys.path[:0] = [{str(_HERE)!r}, {str(_HERE.parent)!r}]
 from letolto import DownloadManager
-m = DownloadManager(r"{OUT}", 1)
-m.load_state(); m.add_urls(["{url}"]); m.start()
+m = DownloadManager({str(OUT)!r}, 1)
+m.load_state(); m.add_urls([{url!r}]); m.start()
 time.sleep(60)
 """
 CRASH = TMP / "_crash.py"
-CRASH.write_text(worker)
+CRASH.write_text(worker, encoding="utf-8")
 testsrv.H.stall = 0.05
 proc = subprocess.Popen([sys.executable, str(CRASH)])
 time.sleep(4.0)
@@ -144,7 +148,7 @@ check("osszeomlas utan folytatva ep a fajl", dest.exists() and md5f(dest) == rea
 # ---------------------------------------------------- 4. serult allapotfajl
 print("\n--- 4. Serult allapotfajl ---")
 OUT = fresh("s_d")
-(OUT / "_letoltes_allapot.json").write_text("{ ez nem json ]]")
+(OUT / "_letoltes_allapot.json").write_text("{ ez nem json ]]", encoding="utf-8")
 mgr = DownloadManager(OUT, 1, client=client)
 try:
     mgr.load_state()
@@ -169,7 +173,10 @@ dt = time.perf_counter() - t0
 done = sum(1 for i in mgr.items.values() if i.status == Status.DONE)
 print(f"    {done}/{len(urls)} fajl {dt:.2f}s alatt, RSS {rss():.1f} MB (+{rss() - before:.1f})")
 check("16 szalon minden fajl kesz", done == len(urls))
-check("nincs memoriaduzzadas 16 szalon", rss() - before < 40, f"+{rss() - before:.1f} MB")
+if kozos.merheto():
+    check("nincs memoriaduzzadas 16 szalon", rss() - before < 40, f"+{rss() - before:.1f} MB")
+else:
+    print("    (ezen a rendszeren nem merheto a memoria, az ellenorzes kimarad)")
 
 # ---------------------------------------------------- 6. szalbiztonsag
 print("\n--- 6. Konyveles szalbiztonsaga ---")

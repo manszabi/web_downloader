@@ -12,8 +12,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = "/home/claude/site"
-
 HTML_INDEX = """<html><body>
 <h1>Index</h1>
 <a href="files/a.bin">a.bin</a>
