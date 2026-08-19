@@ -26,6 +26,21 @@ COLUMNS = (("pipa", "✓", 34), ("fajl", "Fájl", 400), ("meret", "Méret", 90),
            ("letoltve", "Letöltve", 90), ("szazalek", "%", 60),
            ("allapot", "Állapot", 150))
 
+# A megjegyzett beállítások gyári értékei. Egy helyen, mert háromnak kell egyeznie:
+# az induló felületnek, a beállításfájl kulcsainak és a "Beállítások törlése" gombnak.
+ALAPERTEK: dict[str, object] = {
+    "url": "https://",
+    "dir": str(Path.home() / "letoltesek"),
+    "ext": "",
+    "html": False,
+    "depth": 0,
+    "threads": 4,
+    "same_host": True,
+    "robots": True,
+    "robots5xx": False,
+    "existing": str(core.Existing.VERIFY),
+}
+
 
 class OverwriteDialog(tk.Toplevel):
     """Rákérdezés egy meglévő, ép fájl felülírására: Igen / Nem / Összes."""
@@ -115,27 +130,34 @@ class App(tk.Tk):
             return 1.0
         return min(max(dpi / 96.0, 1.0), 3.0)          # épeszű határok közé szorítva
 
+    def _settings_vars(self) -> dict[str, tk.Variable]:
+        """A megjegyzett beállítások: kulcs -> változó.
+
+        Egy helyen, hogy a mentés, a visszatöltés és a törlés ne csúszhasson el
+        egymástól: új beállításhoz elég ezt a szótárat és az ALAPERTEK-et bővíteni.
+        """
+        return {"url": self.v_url, "dir": self.v_dir, "ext": self.v_ext,
+                "html": self.v_html, "depth": self.v_depth,
+                "threads": self.v_threads, "same_host": self.v_same,
+                "robots": self.v_robots, "robots5xx": self.v_robots5xx,
+                "existing": self.v_existing}
+
     def _restore_settings(self) -> None:
         """Az előző futás beállításai, hogy újraindítás után ne kelljen újra begépelni."""
         try:
             saved = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        for name, var in (("url", self.v_url), ("dir", self.v_dir), ("ext", self.v_ext),
-                          ("depth", self.v_depth), ("threads", self.v_threads),
-                          ("same_host", self.v_same), ("robots", self.v_robots),
-                          ("robots5xx", self.v_robots5xx),
-                          ("existing", self.v_existing), ("html", self.v_html)):
+        for name, var in self._settings_vars().items():
             if name in saved:
                 with suppress(tk.TclError, ValueError):
                     var.set(saved[name])
 
     def _save_settings(self) -> None:
-        data = {"url": self.v_url.get(), "dir": self.v_dir.get(), "ext": self.v_ext.get(),
-                "depth": self.v_depth.get(), "threads": self.v_threads.get(),
-                "same_host": self.v_same.get(), "robots": self.v_robots.get(),
-                "robots5xx": self.v_robots5xx.get(),
-                "existing": self.v_existing.get(), "html": self.v_html.get()}
+        # A tkinter alaposztályának get()-je a típusleírásokban jelöletlen, ezért
+        # kell ide a mentesítés; a konkrét változók (StringVar stb.) tipizáltak.
+        data = {name: var.get()      # type: ignore[no-untyped-call]
+                for name, var in self._settings_vars().items()}
         # Ugyanaz a minta, mint az állapotfájlnál: előbb ideiglenes fájlba írunk,
         # és csak a kész tartalom lép a régi helyére. Így áramszünet vagy
         # összeomlás esetén sem marad csonka, olvashatatlan beállításfájl.
@@ -215,13 +237,13 @@ class App(tk.Tk):
             ttk.Label(box, text=text).grid(row=row, column=col, sticky="e", padx=4, pady=3)
 
         label("URL:", 0, 0)
-        self.v_url = tk.StringVar(value="https://")
+        self.v_url = tk.StringVar(value=str(ALAPERTEK["url"]))
         entry = ttk.Entry(box, textvariable=self.v_url)
         entry.grid(row=0, column=1, columnspan=5, sticky="we", padx=4, pady=3)
         entry.bind("<Return>", lambda _e: self._scan())
 
         label("Célkönyvtár:", 1, 0)
-        self.v_dir = tk.StringVar(value=str(Path.home() / "letoltesek"))
+        self.v_dir = tk.StringVar(value=str(ALAPERTEK["dir"]))
         ttk.Entry(box, textvariable=self.v_dir).grid(
             row=1, column=1, columnspan=4, sticky="we", padx=4, pady=3)
         ttk.Button(box, text="Tallózás…", command=self._browse).grid(row=1, column=5, padx=4)
@@ -230,40 +252,40 @@ class App(tk.Tk):
         self._build_extension_area(box)
 
         label("Kiterjesztések:", 3, 0)
-        self.v_ext = tk.StringVar(value="")
+        self.v_ext = tk.StringVar(value=str(ALAPERTEK["ext"]))
         ttk.Entry(box, textvariable=self.v_ext, width=30).grid(
             row=3, column=1, sticky="we", padx=4, pady=3)
-        self.v_html = tk.BooleanVar(value=False)
+        self.v_html = tk.BooleanVar(value=bool(ALAPERTEK["html"]))
         ttk.Checkbutton(box, text="HTML letöltése", variable=self.v_html).grid(
             row=3, column=2, sticky="w")
         ttk.Label(box, text="(üresen: minden kiterjesztés)").grid(
             row=3, column=3, columnspan=2, sticky="w")
 
         label("Mélység:", 4, 0)
-        self.v_depth = tk.IntVar(value=0)
+        self.v_depth = tk.IntVar(value=int(str(ALAPERTEK["depth"])))
         ttk.Spinbox(box, from_=0, to=8, width=5, textvariable=self.v_depth).grid(
             row=4, column=1, sticky="w", padx=4)
 
         label("Szálak:", 4, 3)
-        self.v_threads = tk.IntVar(value=4)
+        self.v_threads = tk.IntVar(value=int(str(ALAPERTEK["threads"])))
         ttk.Spinbox(box, from_=1, to=core.MAX_THREADS, width=5, textvariable=self.v_threads).grid(
             row=4, column=4, sticky="w")
 
-        self.v_same = tk.BooleanVar(value=True)
+        self.v_same = tk.BooleanVar(value=bool(ALAPERTEK["same_host"]))
         ttk.Checkbutton(box, text="csak azonos domain", variable=self.v_same).grid(
             row=5, column=1, sticky="w", padx=4)
-        self.v_robots = tk.BooleanVar(value=True)
+        self.v_robots = tk.BooleanVar(value=bool(ALAPERTEK["robots"]))
         ttk.Checkbutton(box, text="robots.txt betartása", variable=self.v_robots).grid(
             row=5, column=2, sticky="w")
         # Kipipálva: az elérhetetlen robots.txt leállítja az átvizsgálást (RFC 9309),
         # üresen hagyva a program a régi, megengedő módon folytatja.
-        self.v_robots5xx = tk.BooleanVar(value=False)
+        self.v_robots5xx = tk.BooleanVar(value=bool(ALAPERTEK["robots5xx"]))
         self.c_robots5xx = ttk.Checkbutton(box, text="5xx hibánál leáll",
                                            variable=self.v_robots5xx)
         self.c_robots5xx.grid(row=5, column=3, columnspan=2, sticky="w", padx=(12, 0))
 
         label("Meglévő fájl:", 6, 0)
-        self.v_existing = tk.StringVar(value=str(core.Existing.VERIFY))
+        self.v_existing = tk.StringVar(value=str(ALAPERTEK["existing"]))
         ttk.Combobox(box, textvariable=self.v_existing, state="readonly", width=18,
                      values=[str(e) for e in core.Existing]).grid(row=6, column=1,
                                                              sticky="w", padx=4, pady=3)
@@ -301,19 +323,38 @@ class App(tk.Tk):
                    command=lambda: self._set_all_extensions(False)).pack(pady=1)
 
     def _build_toolbar(self) -> None:
+        """Két gombsor: fölül a munkamenet, alul a mappák és a törlések.
+
+        Egyetlen sorban a kilenc gomb nem férne el a legkisebb ablakméretben sem.
+        """
         bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=6, pady=4)
+        bar.pack(fill="x", padx=6, pady=(4, 0))
         self.b_scan = ttk.Button(bar, text="Átvizsgálás", command=self._scan)
+        self.b_scan_stop = ttk.Button(bar, text="Átvizsgálás megszakítása",
+                                      command=self._cancel_scan, state="disabled")
         self.b_load = ttk.Button(bar, text="Korábbi állapot", command=self._load_state)
         self.b_start = ttk.Button(bar, text="Indítás / Folytatás", command=self._start)
         self.b_pause = ttk.Button(bar, text="Szünet", command=self._pause, state="disabled")
         self.b_stop = ttk.Button(bar, text="Leállítás", command=self._stop, state="disabled")
-        self.b_open = ttk.Button(bar, text="Mappa megnyitása", command=self._open_dir)
-        self.b_settings = ttk.Button(bar, text="Beállítások mappája",
-                                     command=self._open_settings_dir)
-        for button in (self.b_scan, self.b_load, self.b_start, self.b_pause,
-                       self.b_stop, self.b_open, self.b_settings):
+        for button in (self.b_scan, self.b_scan_stop, self.b_load,
+                       self.b_start, self.b_pause, self.b_stop):
             button.pack(side="left", padx=3)
+
+        bar2 = ttk.Frame(self)
+        bar2.pack(fill="x", padx=6, pady=(2, 4))
+        self.b_open = ttk.Button(bar2, text="Mappa megnyitása", command=self._open_dir)
+        self.b_settings = ttk.Button(bar2, text="Beállítások mappája",
+                                     command=self._open_settings_dir)
+        self.b_settings_reset = ttk.Button(bar2, text="Beállítások törlése",
+                                           command=self._reset_settings)
+        self.b_state_reset = ttk.Button(bar2, text="Letöltési állapot törlése",
+                                        command=self._reset_state)
+        self.b_open.pack(side="left", padx=3)
+        self.b_settings.pack(side="left", padx=3)
+        # A törlő gombok egy gombnyival távolabb, hogy ne lehessen véletlenül eltalálni.
+        ttk.Frame(bar2, width=120).pack(side="left")
+        self.b_settings_reset.pack(side="left", padx=3)
+        self.b_state_reset.pack(side="left", padx=3)
 
     def _build_table(self) -> None:
         head = ttk.Frame(self)
@@ -388,6 +429,56 @@ class App(tk.Tk):
         self._write_log(f"Beállítások helye: {core.SETTINGS_FILE}")
         self._write_log(f"Naplófájl: {core.LOG_FILE}")
 
+    def _reset_settings(self) -> None:
+        """A mentett beállítások törlése és a mezők gyári értékre állítása."""
+        if not messagebox.askyesno(
+                "Beállítások törlése",
+                f"Törlöd a mentett beállításokat?\n\n{core.SETTINGS_FILE}\n\n"
+                "A mezők a gyári értékekre állnak vissza. A letöltött fájlokhoz és a "
+                "letöltési állapothoz ez nem nyúl.", parent=self):
+            return
+        try:
+            core.SETTINGS_FILE.unlink(missing_ok=True)
+        except OSError as exc:
+            messagebox.showerror("Hiba", f"A beállításfájl nem törölhető:\n{exc}", parent=self)
+            return
+        self._ext_sync = True            # a mezők átállítása ne indítson szinkront
+        try:
+            for name, var in self._settings_vars().items():
+                with suppress(tk.TclError, ValueError):
+                    var.set(ALAPERTEK[name])
+        finally:
+            self._ext_sync = False
+        self._write_log("A beállítások törölve, a mezők a gyári értékeken.")
+        self.v_status.set("Beállítások törölve.")
+
+    def _reset_state(self) -> None:
+        """A letöltési állapot (a célkönyvtár JSON-naplója) törlése."""
+        manager = self._ensure_manager()
+        if manager is None:
+            return
+        if manager.running:
+            messagebox.showinfo("Fut a letöltés",
+                                "Előbb állítsd le a letöltést.", parent=self)
+            return
+        if not messagebox.askyesno(
+                "Letöltési állapot törlése",
+                f"Törlöd a letöltési állapotot?\n\n{manager.store.path}\n\n"
+                "A lista kiürül, és a program elfelejti, mit töltött már le. A már "
+                "letöltött fájlokhoz és a félkész .part darabokhoz nem nyúlunk: azok "
+                "a lemezen maradnak, és egy újabb átvizsgálás után ismét felismerhetők.",
+                parent=self):
+            return
+        try:
+            manager.reset_state()
+        except (OSError, RuntimeError) as exc:
+            messagebox.showerror("Hiba", f"Az állapot nem törölhető:\n{exc}", parent=self)
+            return
+        self._rebuild_panel_from_items()     # a kiterjesztés-panel is ürüljön ki
+        self._update_count()
+        self._write_log(f"A letöltési állapot törölve: {manager.store.path}")
+        self.v_status.set("A letöltési állapot törölve - jöhet egy új átvizsgálás.")
+
     def _ensure_manager(self) -> core.DownloadManager | None:
         raw = self.v_dir.get().strip()
         if not raw:
@@ -428,6 +519,7 @@ class App(tk.Tk):
         self.scanning = True
         self.scan_stop.clear()
         self.b_scan.configure(state="disabled")
+        self.b_scan_stop.configure(state="normal")
         self.v_status.set("Átvizsgálás folyamatban…")
 
         def work() -> None:
@@ -441,6 +533,19 @@ class App(tk.Tk):
             self.events.put(("scanned", found))
 
         threading.Thread(target=work, daemon=True, name="scanner").start()
+
+    def _cancel_scan(self) -> None:
+        """Az átvizsgálás (és a rá következő ellenőrzés) megszakítása.
+
+        Az addig talált fájlok a listában maradnak: a bejárás minden lépésnél
+        megnézi a jelzést, és a részeredménnyel tér vissza.
+        """
+        if str(self.b_scan_stop["state"]) == "disabled":
+            return
+        self.scan_stop.set()
+        self.b_scan_stop.configure(state="disabled")
+        self.v_status.set("Az átvizsgálás megszakítása…")
+        self._write_log("Az átvizsgálás megszakítva - az eddigi találatok megmaradnak.")
 
     def _load_state(self) -> None:
         manager = self._ensure_manager()
@@ -536,6 +641,8 @@ class App(tk.Tk):
             case "scanned":
                 if isinstance(payload, core.ScanResult):
                     self._on_scanned(payload)
+            case "sizes":
+                self._on_sizes(payload if isinstance(payload, int) else 0)
             case "verified":
                 if isinstance(payload, tuple):
                     self._on_verified(payload)
@@ -629,7 +736,9 @@ class App(tk.Tk):
         ez körönként 0,8 ms lenne, másodpercenként hatszor)."""
         if self.manager is None:
             return
-        self.v_count.set(f"{self.manager.totals.files} / {len(self.manager.items)} kijelölve")
+        totals = self.manager.totals
+        meret = f" · {core.human(totals.bytes_total)}" if totals.bytes_total else ""
+        self.v_count.set(f"{totals.files} / {len(self.manager.items)} kijelölve{meret}")
 
     # -- kiterjesztés-panel -------------------------------------------
     def _rebuild_extension_panel(self, groups: dict[str, list[str]],
@@ -811,9 +920,34 @@ class App(tk.Tk):
                 manager.classify_existing(items, record)
             except Exception as exc:                       # hálózati hiba stb.
                 self.events.put(("log", f"Az ellenőrzés félbeszakadt: {core._brief(exc)}"))
+            # A méret nem derül ki az átvizsgálásból (az csak címeket gyűjt), ezért
+            # itt kérdezzük meg a kiszolgálótól, fájlonként egy HEAD kéréssel. Az
+            # "Átvizsgálás megszakítása" gomb ezt a lépést is leállítja.
+            if not self.scan_stop.is_set():
+                self.events.put(("log", "Fájlméretek lekérdezése…"))
+                try:
+                    talalt = manager.fetch_sizes(items, stop=self.scan_stop)
+                except Exception as exc:
+                    self.events.put(("log", "A méretek lekérdezése félbeszakadt: "
+                                            f"{core._brief(exc)}"))
+                    talalt = 0
+                self.events.put(("sizes", talalt))
             self.events.put(("verified", (intact, broken)))
 
         threading.Thread(target=work, daemon=True, name="verify").start()
+
+    def _on_sizes(self, talalt: int) -> None:
+        """A lekérdezett méretek megjelenítése a listában."""
+        manager = self.manager
+        if manager is None:
+            return
+        for item in manager.items.values():
+            if item.total:
+                self._queue_row(item)
+        self._flush_rows()
+        self._update_count()
+        self._write_log(f"Méret {talalt} fájlnál derült ki; a kijelöltek együtt "
+                        f"{core.human(manager.totals.bytes_total)}.")
 
     def _on_verified(self, payload: tuple[list[str], list[str]]) -> None:
         """Ép fájl -> pipa le; hiányzó vagy sérült -> pipa fel."""
@@ -843,6 +977,7 @@ class App(tk.Tk):
             self._write_log(f"Ellenőrzés kész: {len(intact)} fájl már megvan épen "
                             f"(pipa levéve), {len(broken)} sérült vagy hiányos.")
         self.v_status.set(f"{waiting} fájl letöltésre kijelölve.")
+        self.b_scan_stop.configure(state="disabled")     # a bejárást követő lépés is kész
         self._update_count()
 
     def _checked_labels(self) -> set[str]:

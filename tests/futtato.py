@@ -27,8 +27,8 @@ IDOKORLAT = 900          # masodperc: a terhelesi teszt a leglassabb
 
 # Ezek valodi ablakot nyitnak, tehat kepernyo (vagy Xvfb) kell hozzajuk.
 ABLAKOS = {"test_gui.py", "test_gui_robots.py", "test_gui_szinkron.py",
-           "test_gui_valogatas.py", "test_epseg.py", "test_szalak.py",
-           "test_osszeomlas.py"}
+           "test_gui_valogatas.py", "test_gui_todo.py", "test_epseg.py",
+           "test_szalak.py", "test_osszeomlas.py"}
 
 
 def szkriptek() -> list[str]:

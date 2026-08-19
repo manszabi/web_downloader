@@ -83,6 +83,15 @@ indulás és a kilépés, a célkönyvtár, az átvizsgálás paraméterei és e
 forrás cím és a célfájl, továbbá minden hiba – az újrapróbálkozások és a `robots.txt` gondjai
 is. A pontos helyét a *Beállítások mappája* gomb írja ki.
 
+## Gombok
+
+* **Átvizsgálás megszakítása** – a bejárás és az utána következő ellenőrzés/méretlekérdezés
+  leállítása; az addigi találatok megmaradnak.
+* **Beállítások törlése** – a mentett beállítások törlése, a mezők gyári értékre állnak.
+* **Letöltési állapot törlése** – a célkönyvtár `_letoltes_allapot.json` fájlja törlődik, a
+  lista kiürül. A letöltött fájlokhoz és a `.part` darabokhoz nem nyúl; futó letöltés közben
+  nem engedi. Mindkét törlés rákérdez.
+
 ## Megszakítás és folytatás
 
 A *Szünet* és a *Leállítás* is folytatható állapotot hagy maga után; a részfájlok `.part`
@@ -117,7 +126,7 @@ python test_epseg.py        python test_szalak.py       python test_gui.py
 python test_terheles.py     python test_osszeomlas.py   python test_windows.py
 python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
 python test_naplo.py        python test_gui_robots.py
-python test_hatekonysag.py
+python test_hatekonysag.py  python test_gui_todo.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi
