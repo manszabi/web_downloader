@@ -64,6 +64,17 @@ panelen kipipálsz, az beíródik a mezőbe (a html a saját kapcsolójára ker�
 **Beállítások mappája.** Egy gomb a felületen új fájlkezelő-ablakot nyit a beállításfájl
 helyén (Windowson `%APPDATA%\PyLetolto\`, ott mindjárt ki is jelöli a fájlt).
 
+**Megszakítható átvizsgálás.** Az *Átvizsgálás megszakítása* gomb a bejárást és a rá következő
+ellenőrzést is leállítja; az addig talált fájlok a listában maradnak.
+
+**Fájlméretek.** Az átvizsgálás csak címeket gyűjt (egy nagy oldal így néhány kérésből
+átnézhető), a méretet utána, fájlonként egy HEAD kéréssel derítjük ki. Megjelenik a
+táblázatban, és a kijelölt fájlok összmérete a lista fölött is látszik.
+
+**Törlő gombok.** A *Beállítások törlése* a mentett beállításokat állítja gyári értékre, a
+*Letöltési állapot törlése* pedig a célkönyvtár `_letoltes_allapot.json` fájlját üríti — a már
+letöltött fájlokhoz és a félkész `.part` darabokhoz egyik sem nyúl. Mindkettő rákérdez.
+
 **Automatikus pipálás épség szerint.**
 
 | A fájl állapota a célkönyvtárban | Mi történik |
@@ -126,13 +137,13 @@ python tests/test_terheles.py      python tests/test_osszeomlas.py
 python tests/test_windows.py       python tests/test_gui_valogatas.py
 python tests/test_gui_szinkron.py  python tests/test_robots.py
 python tests/test_naplo.py         python tests/test_gui_robots.py
-python tests/test_hatekonysag.py
+python tests/test_hatekonysag.py   python tests/test_gui_todo.py
 ```
 
 Minden feltöltésnél GitHub Actions is lefuttatja őket, **Linuxon és Windowson**, Python 3.11
 és 3.13 alatt, a `ruff` és a szigorú `mypy` mellé (`.github/workflows/ellenorzes.yml`).
 
-Jelenlegi állás: **431 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
+Jelenlegi állás: **467 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
 első futásai három valódi, Linuxot feltételező tesztbeli hibát hoztak felszínre, lásd a
 jegyzőkönyv 10. pontját). A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.

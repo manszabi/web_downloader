@@ -59,13 +59,20 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _html(self, body):
+    def _html(self, body, head=False):
+        """HTML valasz. HEAD keresre CSAK a fejlec megy ki.
+
+        Ha a torzset is elkuldenenk, a keep-alive kapcsolaton a kovetkezo valasz
+        elejenek nezne a kliens: a HEAD-et hasznalo meretlekerdezes ettol
+        veletlenszeruen elbukott.
+        """
         data = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        if not head:
+            self.wfile.write(data)
 
     def do_HEAD(self):
         self.do_GET(head=True)
@@ -73,11 +80,11 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self, head=False):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
-            return self._html(HTML_INDEX)
+            return self._html(HTML_INDEX, head)
         if path == "/sub/page2.html":
-            return self._html(HTML_PAGE2)
+            return self._html(HTML_PAGE2, head)
         if path == "/sub/page3.html":
-            return self._html(HTML_PAGE3)
+            return self._html(HTML_PAGE3, head)
         if path == "/robots.txt":
             if H.robots_status == 200:
                 body = H.robots_body.encode()

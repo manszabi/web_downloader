@@ -994,6 +994,13 @@ class StateStore:
     def mark_dirty(self) -> None:
         self._dirty = True
 
+    def clear(self) -> None:
+        """Az állapotfájl törlése. A legközelebbi mentés újra létrehozza."""
+        with self._lock:
+            with suppress(OSError):
+                self.path.unlink(missing_ok=True)
+            self._dirty = False
+
     def load(self) -> dict[str, Item]:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -1366,6 +1373,54 @@ class DownloadManager:
             if on_each is not None:
                 on_each(item, verdict)
         return sum(verdicts)
+
+    def reset_state(self) -> None:
+        """A letöltési állapot elfelejtése: a lista kiürül, az állapotfájl törlődik.
+
+        A már letöltött fájlokhoz és a félkész ``.part`` darabokhoz nem nyúl: azok a
+        lemezen maradnak, és egy újabb átvizsgálás után ismét felismerhetők. Futó
+        letöltés közben nem használható, mert a munkásszálak alól tűnne el a lista.
+        """
+        if self.running:
+            raise RuntimeError("Előbb állítsd le a letöltést.")
+        with self._lock:
+            self.items.clear()
+            self._used_paths.clear()
+            self._todo.clear()
+        self.totals = Totals()
+        self.store.clear()
+        self.on_event("reset", [])
+
+    def fetch_sizes(self, items: Iterable[Item],
+                    on_each: Callable[[Item], None] | None = None,
+                    stop: threading.Event | None = None) -> int:
+        """A még ismeretlen fájlméretek lekérdezése. A megtaláltak számát adja vissza.
+
+        Az átvizsgálás csak címeket gyűjt: a méret a kiszolgálótól kell, fájlonként
+        egy HEAD kéréssel. Ezért külön, megszakítható lépés, és csak azokra fut,
+        amelyeknél még nem tudjuk a méretet (a letöltött vagy ellenőrzött fájloknál
+        már megvan).
+        """
+        unknown = [item for item in items if not item.total]
+        if not unknown:
+            return 0
+
+        def one(item: Item) -> bool:
+            if stop is not None and stop.is_set():
+                return False
+            size = self._remote_size(item.url)
+            if not size:
+                return False
+            self._set_total(item, size)
+            if on_each is not None:
+                on_each(item)
+            return True
+
+        workers = min(self.threads, len(unknown))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="size") as pool:
+            found = sum(pool.map(one, unknown))
+        self._recount()      # a _set_total a nem kijelöltekre is hozzáadott
+        return found
 
     def mark_intact(self, item: Item) -> None:
         """Ép, meglévő fájl: késznek jelöljük és levesszük a pipát."""
