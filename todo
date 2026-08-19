@@ -1,0 +1,3 @@
+Átvizsgálás megszakításának lehetősége, egy gomb Átvizsgálás megszakítása néven a jelenlegi Átvizsgálás gomb mellett.
+A jelenlegi Beállítások törlésének lehetősége, Beállítások törlése gomb a Beállítások mappája gombtól egy gomnyira távolabb, rákattintáskor meg kell erősíteni hogy igen vagy nem.
+Átvizsgáláskor nem ír fájl méretet a fájlok ablakban, mi az oka?, ha lehet írja a talált fájlok méreteit, kijelöléskor a Fájlok ablak alatt a letöltésre kijelölt fájlok száma melett írja a kijelölt fájlok össz méretét is, a kiírás dinamikusan változzon a fájlméret nagysága szerint -byte/kilobyte/megabyte/gigabyte/terrabyte 
