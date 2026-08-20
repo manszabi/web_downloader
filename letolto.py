@@ -909,7 +909,8 @@ class Scanner:
         """A bejárás munkaállapota egy helyen."""
 
         result: ScanResult
-        visited: set[str]
+        visited: set[str]           # amit már megnyitottunk
+        queued: set[str]            # amit már betettünk a sorba (a duplikátum ellen)
         seen_files: set[str]
         todo: deque[tuple[str, int]]
         root_host: str
@@ -923,9 +924,10 @@ class Scanner:
         note(f"Átvizsgálás indul: {self.cfg.root} (mélység {self.cfg.depth}, "
              f"{'csak azonos domain' if self.cfg.same_host else 'bármely domain'}, "
              f"robots.txt: {'betartva' if self.cfg.respect_robots else 'figyelmen kívül'})")
-        crawl = self._Crawl(result=ScanResult(), visited=set(), seen_files=set(),
-                            todo=deque([(self.cfg.root, 0)]),
-                            root_host=urlparse(self.cfg.root).netloc)
+        root = urldefrag(self.cfg.root).url
+        crawl = self._Crawl(result=ScanResult(), visited=set(), queued={root},
+                            seen_files=set(), todo=deque([(root, 0)]),
+                            root_host=urlparse(root).netloc)
         result, visited, seen_files, todo = (crawl.result, crawl.visited,
                                              crawl.seen_files, crawl.todo)
 
@@ -965,16 +967,26 @@ class Scanner:
 
     def _sort_links(self, links: list[str], base: str, depth: int,
                     crawl: Scanner._Crawl) -> None:
-        """A hivatkozásokat vagy bejárandó lapnak, vagy letölthető fájlnak sorolja be."""
+        """A hivatkozásokat vagy bejárandó lapnak, vagy letölthető fájlnak sorolja be.
+
+        A már ismert címeket a robots.txt-től sem kérdezzük meg újra, és a sorba
+        sem tesszük be másodszor. Egy tipikus oldalon a menü és a lábléc minden
+        lapon szerepel, tehát ugyanaz a néhány száz cím jön vissza laponként:
+        enélkül a sor ezekkel telik meg (memória), és mindegyikre lefut a
+        robots-illesztés is.
+        """
         for full in self._absolute_links(links, base, crawl.root_host):
-            if not self._allowed(full):
-                continue
             # Lapnak látszik és van még mélység -> bejárjuk. A mélységhatáron
             # túl viszont fájlként vesszük fel, hogy ne vesszen el a találat.
-            if self._looks_like_page(full) and depth < self.cfg.depth:
-                if full not in crawl.visited:
-                    crawl.todo.append((full, depth + 1))
-            elif full not in crawl.seen_files:
+            lap = self._looks_like_page(full) and depth < self.cfg.depth
+            if full in (crawl.queued if lap else crawl.seen_files):
+                continue
+            if not self._allowed(full):
+                continue
+            if lap:
+                crawl.queued.add(full)
+                crawl.todo.append((full, depth + 1))
+            else:
                 crawl.seen_files.add(full)
                 crawl.result.files.append(full)
 

@@ -288,6 +288,64 @@ for _ in range(60):
             elteres += 1
 check("2400 veletlen dontes egyezik a referenciaval", elteres == 0, str(elteres))
 
+# ------------------------------------------------------------------ 11.
+print("\n--- 11. A bejaras nem gyujti be ketszer ugyanazt a cimet ---")
+
+
+class Lap:
+    """HTML-valasz helyettesitese: minden lapon ugyanaz a menu."""
+
+    def __init__(self, url, html):
+        self.status_code = 200
+        self.headers = {"content-type": "text/html"}
+        self.url = url
+        self._html = html
+        self.num_bytes_downloaded = 0
+
+    def iter_text(self, size=8192):
+        for i in range(0, len(self._html), size):
+            darab = self._html[i:i + size]
+            self.num_bytes_downloaded += len(darab.encode())
+            yield darab
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class MenusKiszolgalo:
+    def stream(self, method, url, timeout=None):
+        if url.endswith("/robots.txt"):
+            valasz = Lap(url, "User-agent: *\nDisallow: /tiltott/\n")
+            valasz.headers = {"content-type": "text/plain"}
+            return valasz
+        menu = "".join(f'<a href="/lap{i}.html">l{i}</a>' for i in range(20))
+        return Lap(url, f"<html><body>{menu}<a href='{url}#tetejere'>ugyanez</a>"
+                        f"<a href='/kozos.pdf'>kozos</a></body></html>")
+
+
+cfg = letolto.ScanConfig(root="http://pelda.hu/#nyito", depth=2, same_host=True,
+                         respect_robots=True, max_pages=25)
+sc = letolto.Scanner(cfg, MenusKiszolgalo(), lambda m: None, threading.Event())
+dontesek = []
+eredeti_allowed = sc._allowed
+sc._allowed = lambda u: (dontesek.append(u), eredeti_allowed(u))[1]
+eredmeny = sc.run()
+# Cimenkent legfeljebb ket robots-dontes szuletik: egy a sorba tetelnel, egy a
+# megnyitasnal. A duplikatumok kiszurese nelkul ez a lapok szamaval szorzodott
+# (21 lap x 21 hivatkozas = 441 dontes 22 cimre).
+egyedi = len(set(dontesek))
+check("a menu nem sokszorozza a robots-donteseket", len(dontesek) <= 2 * egyedi,
+      f"{len(dontesek)} dontes {egyedi} kulonbozo cimre")
+check("a kozos fajl egyszer szerepel", eredmeny.files.count("http://pelda.hu/kozos.pdf") == 1,
+      str(eredmeny.files))
+check("a horgony nem kepez uj lapot", len(eredmeny.pages) == len(set(eredmeny.pages)),
+      f"{len(eredmeny.pages)} lap")
+check("a kezdolap horgony nelkul kerul be",
+      eredmeny.pages[0] == "http://pelda.hu/", eredmeny.pages[0])
+
 print("\n=== OSSZEGZES: %d / %d ===" % (sum(R), len(R)))
 client.close()
 srv.shutdown()

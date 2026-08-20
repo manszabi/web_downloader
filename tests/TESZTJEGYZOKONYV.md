@@ -344,6 +344,7 @@ eredményeket a `tests/test_konyveles.py` (37 ellenőrzés) rögzíti, hogy viss
 | 49 | A méret-korlátokat karakterben mértük, a konstans bájtban volt (`MAX_HTML_BYTES`, `ROBOTS_MAX_TEXT`) | Többbájtos kódolású oldalnál a valódi korlát a megadott többszöröse lett volna | javítás: `resp.num_bytes_downloaded`, ami a nyers bájtokat számolja |
 | 50 | A `robots.txt` döntése minden címnél végignézte az összes szabályt | A leghosszabb minta nyer, tehát a szabályok **egyszeri** rendezésével az első találat már a válasz | a rendezés helyessége 2400 véletlen döntésen egyezik a régi, végigjáró megoldással (`test_konyveles.py` 10. pont) |
 | 51 | A találatok csoportosítása (`by_extension()`) minden átvizsgálás végén kétszer futott le | A `matching_extensions()` újra végigjárta az összes címet, pedig a kész csoportok ott voltak | kódelemzés; a felület és a parancssor is a kész csoportokat adja tovább |
+| 52 | A bejárás sora nem szűrte a duplikátumokat: a `visited` csak a **megnyitott** címeket ismerte, a sorba tettét nem | Egy valódi oldalon a menü és a lábléc minden lapon szerepel, tehát ugyanaz a néhány száz cím jön vissza laponként. Mindegyik bekerült a sorba (memória), és mindegyikre lefutott a `robots.txt`-illesztés is – a lapok számával **szorzódva** | mérés: 300 lap, laponként 400 közös hivatkozás -> **40,3 s / 121 800 robots-döntés / 12,0 MB** helyett **15,7 s / 2 200 döntés / 2,2 MB**, ugyanazzal az eredménnyel (300 lap, 1500 fájl). Javítás: `queued` halmaz, és az ismert címet a robots.txt-től sem kérdezzük újra |
 
 Apróságok ugyanebben a körben: az `add_urls()` a címkeszótárat elemenként építette újra
 (`(labels or {})` a cikluson belül); a méretlekérdezés után a felület a **teljes** listát
@@ -358,6 +359,7 @@ Mérési összefoglaló (20 000 elem, ugyanaz a gép):
 | állapot visszatöltése (meglévő fájlokkal) | 290 ms, 40 000 `stat` | **215 ms, 20 000 `stat`** |
 | 200 kijelölésváltás | 748 ms | **0,2 ms** |
 | fölösleges `fsync` fájlonként | 1 | **0** |
+| bejárás 300 lapon, közös menüvel | 40,3 s, 12,0 MB | **15,7 s, 2,2 MB** |
 
-A csomag mostantól **504 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 37 pontja),
+A csomag mostantól **508 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 41 pontja),
 `ruff` és szigorú `mypy` továbbra is tisztán fut.
