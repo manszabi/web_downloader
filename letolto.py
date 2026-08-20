@@ -1679,7 +1679,11 @@ class DownloadManager:
                     fh.write(chunk)
                     self._set_done(item, item.done + len(chunk))
                     now = time.monotonic()
-                    if now - last_flush > FLUSH_SECONDS:
+                    # ">=", nem ">": a Windows monotonic órája Python 3.12-ig
+                    # 15,6 ms-onként lép, tehát egy gyors fájlnál a különbség
+                    # végig pontosan 0,0 - a nullára állított FLUSH_SECONDS
+                    # ("minden darab után ürítsd") így sosem teljesült volna.
+                    if now - last_flush >= FLUSH_SECONDS:
                         last_flush = now
                         fh.flush()          # a Python pufferéből az operációs rendszerhez
                         os.fsync(fh.fileno())   # onnan a lemezre: áramszünet is túlélhető

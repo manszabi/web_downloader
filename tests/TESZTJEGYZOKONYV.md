@@ -366,5 +366,16 @@ Mérési összefoglaló (20 000 elem, ugyanaz a gép):
 | bejárás 300 lapon, közös menüvel | 40,3 s, 12,0 MB | **15,7 s, 2,2 MB** |
 | 2000 fájl célmappája | 2002 `mkdir` | **22 `mkdir`** |
 
+Amit a **Windows-ág fogott meg** ebből a körből: a fölösleges `fsync` javítása után
+(41. pont) a `test_hatekonysag.py` „közben az fsync is lefutott" ellenőrzése Windowson,
+Python 3.11 alatt elbukott – Linuxon és Windows/3.13-on nem. Ok: a `time.monotonic()`
+Windowson **Python 3.12-ig 15,6 ms-onként lép** (3.13-tól QPC-alapú, ~100 ns). A teszt a
+`FLUSH_SECONDS = 0.0` beállítással azt kéri, hogy minden darab után legyen ürítés, a
+`now - last_flush > 0.0` feltétel viszont egy gyors, helyi fájlnál végig pontosan `0.0`
+különbséggel futott, tehát sosem teljesült. A feltétel `>=`-re változott: a nullás ütem így
+tényleg „minden darab után" jelentést kap, az 5 másodperces alapérték pedig változatlan.
+Durva órát szimulálva (a `monotonic` 15,6 ms-ra kerekítve) a javítás előtt 0, utána 7 `fsync`
+futott le ugyanarra a fájlra.
+
 A csomag mostantól **510 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 43 pontja),
 `ruff` és szigorú `mypy` továbbra is tisztán fut.
