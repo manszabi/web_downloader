@@ -320,3 +320,65 @@ Amit **megmértünk, és nem kellett javítani**: a `httpx.iter_bytes()` alapbó
 darabokat ad (5 MB = 84 darab), és kézzel 256 KB-ra összefűzve *lassabb* lett (15,9 ms ->
 25,9 ms), ezért a darabolás maradt. A `_run` felügyelő ciklusa `time.sleep` helyett most
 `Event.wait`-tel vár, így a Leállítás nem késik egy teljes kört.
+
+## 12. Mérnöki felülvizsgálat: könyvelés, szálbiztonság, fájlkezelés (2026-08)
+
+Ez a kör a *meglévő* kódot vizsgálta végig hibákra, inkonzisztenciákra, valamint memória- és
+processzoridő-pazarlásra. Minden állítás mögött futtatott reprodukció vagy mérés áll; az
+eredményeket a `tests/test_konyveles.py` (37 ellenőrzés) rögzíti, hogy vissza ne csússzanak.
+
+| # | Hiba | Következmény | Bizonyíték |
+|---|------|--------------|-----------|
+| 37 | A `recount()` és a `pending()` a szótárat zár és pillanatkép nélkül járta be | Ha egy futó ellenőrzés mellett új átvizsgálás indult, `RuntimeError: dictionary changed size during iteration`. A 27. pontban a *mentésre* ez már ki volt javítva, a másik két bejárásra nem – klasszikus félig elvégzett javítás | reprodukció: bővítő és bejáró szál egymás mellett, mindkét függvény elszállt az első körben. Javítás: közös `snapshot()`, és a felület is ezen keresztül jár |
+| 38 | Az összesítő karbantartása négyfelé volt szórva, és nem ugyanazt a szabályt követte | A `recount()` **csak a kipipált** elemeket számolta, a `_set_total`/`_set_done`/`_finish` viszont mindet: a `mark_intact()` után a felület 2 fájlt mutatott 1 helyett, amíg valaki teljes újraszámolást nem kért | mérés: `mark_intact` után `files=2`, `recount()` után `files=1`. Javítás: minden számító mező (`selected`, `total`, `done`, `status`) egyetlen könyvelő függvénypáron megy át, a `recount()` már csak a lista cseréjéhez kell |
+| 39 | A `set_selected()` minden hívásnál újraszámolta az egész listát | A 31. pont kötegeléssel *elrejtette* a bajt, de nem szüntette meg: egy sor átpipálása 20 000 elemnél 3,5 ms, a kiterjesztés-szinkron pedig hívásonként kétszer csinálta | mérés: 200 kijelölésváltás **748 ms -> 0,2 ms** (a könyvelés most különbségekből épül) |
+| 40 | Az „Átvizsgálás megszakítása” gomb az **épség-ellenőrzést nem** állította le | A README és a todo is azt ígérte, hogy a bejárás utáni lépést is megszakítja; a méretlekérdezés valóban figyelte a jelzést, a `classify_existing()` viszont nem is kapott ilyen paramétert. Nagy listánál a megszakítás után percekig ment még a HEAD-áradat | teszt: megszakítás után 0 kérés megy ki (előtte mind a 4) |
+| 41 | Minden fájl **első adagjánál** azonnali `fsync` futott | A `last_flush = 0.0` kezdőértékhez képest a monotonic óra induláskor már bőven 5 fölött jár, tehát az „5 másodpercenként” szabály az első adagra sosem teljesült. Sok kis fájlnál ez fájlonként egy fölösleges lemezre-írás | teszt: `os.fsync` hívások száma egy gyors fájl letöltésénél **1 -> 0** |
+| 42 | A `Retry-After` várakozása után jött a saját, exponenciális szünet is | A kiszolgáló kért 30 másodperce után a program még 2-4-8-at várt, a naplóba pedig a *rossz* számot írta ki („2s múlva”, miután 30-at aludt) | javítás: a kért várakozás a `Retryable` kivétellel utazik, és a szünetet egy helyen tartjuk. Teszt: 503 + `Retry-After: 12` -> `wait=12`, közben nem alszik el a szál |
+| 43 | Az állapotfájl `version` mezőjét senki nem nézte meg, a `status` mezőt senki nem ellenőrizte | Egy kézzel szerkesztett vagy újabb formátumú fájlból tetszőleges szöveg került a felületre státuszként, a negatív méret pedig elrontotta az összesítőt | teszt: `"status": "kacsa"` -> „várakozik”, `"total": -5` -> 0, `version: 99` -> figyelmeztetés a naplóban, de a beolvasás megtörténik |
+| 44 | A `_confirm_overwrites()` `bool`-t adott vissza, a hívó ellenőrizte is – csak épp mindig igaz volt | Holt vezérlési ág: az olvasó azt hiszi, van „mégsem” válasz, pedig nincs | kódelemzés; a visszatérési érték törölve |
+| 45 | A felület frissítő hurka egyetlen kivételtől megállt | A `_pump()` a végén ütemezte újra magát: ha egy eseménykezelő hibára futott, a felület **némán befagyott**, miközben a letöltés a háttérben ment tovább | kódelemzés; az újraütemezés mostantól a hibaágon is megtörténik, a hiba pedig a naplóba kerül |
+| 46 | A célkönyvtár mezőjébe gépelés futó letöltés közben lecserélte a kezelőt | A `close()` leállította a szálakat: a felhasználó csak annyit látott, hogy a letöltés magától abbamaradt | kódelemzés; futás közben nincs automatikus váltás, az Indításnál pedig naplósor jelzi |
+| 47 | Az `exists()` + `stat()` páros mindenhol kétszer kérdezte meg ugyanazt | 20 000 elem visszatöltése 40 000 rendszerhívás 20 000 helyett; ráadásul a két hívás közt a fájl el is tűnhet (verseny) | mérés: **40 000 -> 20 000** `stat`, 290 ms -> 215 ms. Javítás: `disk_size()` |
+| 48 | A mentés az egész listát egyetlen sztringgé fűzte, majd a `write_text` még egyszer bájtokká | 20 000 elemnél 22,5 MB pillanatnyi memória egy 4,56 MB-os fájlhoz – épp a nagy listánál, ahol a legkevésbé fér el | mérés (`tracemalloc`): **22,5 MB -> 2,8 MB**, és a mentés *gyorsabb* is lett: **677 ms -> 560 ms** (ezres adagokban; az elemenkénti `json.dump` viszont kétszer lassabb volt, 1577 ms – ezért maradt az adagolás) |
+| 49 | A méret-korlátokat karakterben mértük, a konstans bájtban volt (`MAX_HTML_BYTES`, `ROBOTS_MAX_TEXT`) | Többbájtos kódolású oldalnál a valódi korlát a megadott többszöröse lett volna | javítás: `resp.num_bytes_downloaded`, ami a nyers bájtokat számolja |
+| 50 | A `robots.txt` döntése minden címnél végignézte az összes szabályt | A leghosszabb minta nyer, tehát a szabályok **egyszeri** rendezésével az első találat már a válasz | a rendezés helyessége 2400 véletlen döntésen egyezik a régi, végigjáró megoldással (`test_konyveles.py` 10. pont) |
+| 51 | A találatok csoportosítása (`by_extension()`) minden átvizsgálás végén kétszer futott le | A `matching_extensions()` újra végigjárta az összes címet, pedig a kész csoportok ott voltak | kódelemzés; a felület és a parancssor is a kész csoportokat adja tovább |
+| 53 | Minden fájl letöltése előtt lefutott egy `mkdir(parents=True, exist_ok=True)` | Az is rendszerhívás, ha a mappa rég megvan: húszezer fájlnál húszezerszer kérdezzük ugyanazt, holott a mappák száma ennek töredéke – ráadásul 32 szál ugyanarra a mappára | mérés: 2000 fájl 20 mappában, **2002 -> 22** `mkdir`, 24,1 ms -> 10,0 ms. Javítás: `_ensure_dir()` mappánként egyszer |
+| 54 | A `load_state()` kétszer járta végig a listát (névütközés-nyilvántartás, majd a lemez állapota) | Fölösleges kör húszezer elemen | egyetlen ciklus lett belőle |
+| 55 | A felület indulásakor ütemezett automatikus betöltés időzítője nem volt megjegyezve | Az ablak azonnali bezárásánál megszűnt ablakon futott volna le (`TclError`) | kódelemzés; az időzítő bekerült a bezáráskor visszavontak közé |
+| 56 | A „Meglévő fájl" beállítás visszatöltése nem ellenőrizte az értéket | Kézzel szerkesztett beállításfájlból tetszőleges szöveg került a mezőbe, és a mag némán a legóvatosabb ágra esett vissza | kódelemzés; ismeretlen érték helyett a gyári alapérték |
+| 52 | A bejárás sora nem szűrte a duplikátumokat: a `visited` csak a **megnyitott** címeket ismerte, a sorba tettét nem | Egy valódi oldalon a menü és a lábléc minden lapon szerepel, tehát ugyanaz a néhány száz cím jön vissza laponként. Mindegyik bekerült a sorba (memória), és mindegyikre lefutott a `robots.txt`-illesztés is – a lapok számával **szorzódva** | mérés: 300 lap, laponként 400 közös hivatkozás -> **40,3 s / 121 800 robots-döntés / 12,0 MB** helyett **15,7 s / 2 200 döntés / 2,2 MB**, ugyanazzal az eredménnyel (300 lap, 1500 fájl). Javítás: `queued` halmaz, és az ismert címet a robots.txt-től sem kérdezzük újra |
+
+Apróságok ugyanebben a körben: az `add_urls()` a címkeszótárat elemenként építette újra
+(`(labels or {})` a cikluson belül); a méretlekérdezés után a felület a **teljes** listát
+újrarajzolta ahelyett, hogy csak a ténylegesen megtalált méretű sorokat; a `_brief()`
+belső névvel volt jelölve, miközben a felület is használja (mostantól `brief()`).
+
+Mérési összefoglaló (20 000 elem, ugyanaz a gép):
+
+| Művelet | Előtte | Utána |
+|---|---|---|
+| állapot mentése | 677 ms, 22,5 MB csúcsmemória | **560 ms, 2,8 MB** |
+| állapot visszatöltése (meglévő fájlokkal) | 290 ms, 40 000 `stat` | **215 ms, 20 000 `stat`** |
+| 200 kijelölésváltás | 748 ms | **0,2 ms** |
+| fölösleges `fsync` fájlonként | 1 | **0** |
+| bejárás 300 lapon, közös menüvel | 40,3 s, 12,0 MB | **15,7 s, 2,2 MB** |
+| 2000 fájl célmappája | 2002 `mkdir` | **22 `mkdir`** |
+
+Amit a **Windows-ág fogott meg** ebből a körből: a fölösleges `fsync` javítása után
+(41. pont) a `test_hatekonysag.py` „közben az fsync is lefutott" ellenőrzése Windowson,
+Python 3.11 alatt elbukott – Linuxon és Windows/3.13-on nem. Ok: a `time.monotonic()`
+Windowson **Python 3.12-ig 15,6 ms-onként lép** (3.13-tól QPC-alapú, ~100 ns). A teszt a
+`FLUSH_SECONDS = 0.0` beállítással azt kéri, hogy minden darab után legyen ürítés, a
+`now - last_flush > 0.0` feltétel viszont egy gyors, helyi fájlnál végig pontosan `0.0`
+különbséggel futott, tehát sosem teljesült. A feltétel `>=`-re változott: a nullás ütem így
+tényleg „minden darab után" jelentést kap, az 5 másodperces alapérték pedig változatlan.
+Durva órát szimulálva (a `monotonic` 15,6 ms-ra kerekítve) a javítás előtt 0, utána 7 `fsync`
+futott le ugyanarra a fájlra.
+
+A teljes mátrix zöld: `ruff` + szigorú `mypy`, valamint a tesztcsomag Linuxon és
+Windowson, Python 3.11 és 3.13 alatt.
+
+A csomag mostantól **510 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 43 pontja),
+`ruff` és szigorú `mypy` továbbra is tisztán fut.

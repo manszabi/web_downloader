@@ -118,7 +118,9 @@ class App(tk.Tk):
         self.v_robots.trace_add("write", self._on_robots_changed)
         self._on_robots_changed()
         self._pump_job = self.after(core.UI_TICK_MS, self._pump)
-        self.after(200, self._autoload_state)     # összeomlás utáni folytatás felkínálása
+        # Az időzítőt megjegyezzük: ha a felhasználó azonnal bezárja az ablakot,
+        # a bezárás vissza tudja vonni, mielőtt egy megszűnt ablakon futna le.
+        self._autoload_job = self.after(200, self._autoload_state)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- beállítások megjegyzése -------------------------------------
@@ -152,6 +154,11 @@ class App(tk.Tk):
             if name in saved:
                 with suppress(tk.TclError, ValueError):
                     var.set(saved[name])
+        # A "Meglévő fájl" listának csak a három ismert értéke van értelme; kézzel
+        # szerkesztett vagy régebbi fájlból bármi jöhetne, és a mag némán a
+        # legóvatosabb ágra esne vissza.
+        if self.v_existing.get() not in {str(e) for e in core.Existing}:
+            self.v_existing.set(str(ALAPERTEK["existing"]))
 
     def _save_settings(self) -> None:
         # A tkinter alaposztályának get()-je a típusleírásokban jelöletlen, ezért
@@ -209,11 +216,16 @@ class App(tk.Tk):
         if self.manager is not None and self.manager.outdir == outdir:
             return
         if self.manager is not None:
+            # Futó letöltés alatt a mezőbe gépelés nem szakíthatja félbe a munkát:
+            # a close() leállítaná a szálakat, és a felhasználó csak annyit látna,
+            # hogy a letöltés magától abbamaradt. A váltás az Indításnál történik.
+            if self.manager.running:
+                return
             self.manager.close()
         self.manager = core.DownloadManager(outdir, self.v_threads.get(), on_event=self._on_event)
         self.manager.load_state()
         unfinished = len(self.manager.pending())
-        partial = sum(1 for i in self.manager.items.values()
+        partial = sum(1 for i in self.manager.snapshot()
                       if i.done and i.status != core.Status.DONE)
         if unfinished:
             self._write_log(f"Korábbi munka található: {unfinished} befejezetlen fájl "
@@ -492,6 +504,9 @@ class App(tk.Tk):
             return None
         if self.manager is None or self.manager.outdir != outdir:
             if self.manager is not None:
+                if self.manager.running:      # ne csak úgy abbamaradjon: legyen nyoma
+                    self._write_log("A célkönyvtár megváltozott, az előző letöltés "
+                                    f"leáll: {self.manager.outdir}")
                 self.manager.close()
             self.manager = core.DownloadManager(outdir, self.v_threads.get(),
                                            on_event=self._on_event)
@@ -554,12 +569,17 @@ class App(tk.Tk):
         manager.load_state()
         self._write_log(f"{len(manager.items)} bejegyzés betöltve az állapotfájlból.")
 
-    def _confirm_overwrites(self, manager: core.DownloadManager) -> bool:
-        """Rákérdez a már meglévő, ép fájlok felülírására. Hamis = ne induljon a letöltés."""
-        candidates = [i for i in manager.items.values()
+    def _confirm_overwrites(self, manager: core.DownloadManager) -> None:
+        """Rákérdez a már meglévő, ép fájlok felülírására (Igen / Nem / Összes).
+
+        Az ablaknak nincs "mégsem" válasza: a "nem" a meglévő fájlt tartja meg, a
+        pipát leveszi, és a letöltés a többivel elindul. Korábban ez bool-t adott
+        vissza, amit a hívó ellenőrzött is - csak épp mindig igaz volt.
+        """
+        candidates = [i for i in manager.snapshot()
                       if i.selected and i.status == core.Status.DONE and not i.force]
         if not candidates:
-            return True
+            return
         answer = ""
         for index, item in enumerate(candidates):
             if answer != "osszes":
@@ -572,7 +592,6 @@ class App(tk.Tk):
             self._queue_row(item)
         self._flush_rows()
         self._update_count()
-        return True
 
     def _start(self) -> None:
         manager = self._ensure_manager()
@@ -583,8 +602,7 @@ class App(tk.Tk):
             self.b_pause.configure(text="Szünet")
             self.v_status.set("Letöltés folytatva.")
             return
-        if not self._confirm_overwrites(manager):
-            return
+        self._confirm_overwrites(manager)
         if not manager.pending():
             if manager.items:
                 messagebox.showinfo("Info", "Nincs kipipálva letöltendő fájl. Jelöld ki, "
@@ -615,7 +633,22 @@ class App(tk.Tk):
 
     # -- eseményhurok --------------------------------------------------
     def _pump(self) -> None:
-        """Egyetlen GUI-szálon futó frissítés; a sorból kötegelve dolgozunk."""
+        """Egyetlen GUI-szálon futó frissítés; a sorból kötegelve dolgozunk.
+
+        A feldolgozás hibája nem viheti el a hurkot: egyetlen váratlan kivétel
+        (egy sor kirajzolása, egy eseménykezelő) enélkül megállította volna az
+        újraütemezést, és a felület némán befagy - miközben a letöltés a
+        háttérben fut tovább, és a felhasználó nem lát belőle semmit.
+        """
+        try:
+            self._drain_events()
+        except Exception as exc:         # a hurok soha ne haljon el némán
+            core.log.warning("A felület frissítése hibára futott: %s", core.brief(exc))
+        if not self._closing:            # bezárás után ne ütemezzünk újat
+            self._pump_job = self.after(core.UI_TICK_MS, self._pump)
+
+    def _drain_events(self) -> None:
+        """Egy kör: korlátozott adag esemény, majd a sorok és a státusz frissítése."""
         try:
             for _ in range(core.UI_BATCH):           # egy körben korlátozott adag
                 kind, payload = self.events.get_nowait()
@@ -624,8 +657,6 @@ class App(tk.Tk):
             pass
         self._flush_rows()
         self._refresh_status()
-        if not self._closing:            # bezárás után ne ütemezzünk újat
-            self._pump_job = self.after(core.UI_TICK_MS, self._pump)
 
     def _handle_event(self, kind: str, payload: object) -> None:
         """Egy háttéresemény feldolgozása a GUI szálán."""
@@ -642,7 +673,7 @@ class App(tk.Tk):
                 if isinstance(payload, core.ScanResult):
                     self._on_scanned(payload)
             case "sizes":
-                self._on_sizes(payload if isinstance(payload, int) else 0)
+                self._on_sizes(payload if isinstance(payload, list) else [])
             case "verified":
                 if isinstance(payload, tuple):
                     self._on_verified(payload)
@@ -725,8 +756,9 @@ class App(tk.Tk):
     def _set_all_files(self, value: bool) -> None:
         if self.manager is None:
             return
-        self.manager.set_selected(list(self.manager.items), value)
-        for item in self.manager.items.values():
+        items = self.manager.snapshot()
+        self.manager.set_selected([i.url for i in items], value)
+        for item in items:
             self._queue_row(item)
         self._flush_rows()
 
@@ -770,7 +802,7 @@ class App(tk.Tk):
         if manager is None or not changes:
             return
         buckets: dict[bool, list[str]] = {True: [], False: []}
-        for item in manager.items.values():
+        for item in manager.snapshot():
             value = changes.get(core.item_label(item))
             if value is not None and item.selected != value:
                 buckets[value].append(item.url)
@@ -792,7 +824,7 @@ class App(tk.Tk):
             return
         groups: dict[str, list[str]] = {}
         checked: set[str] = set()
-        for item in self.manager.items.values():
+        for item in self.manager.snapshot():
             name = core.item_label(item)
             groups.setdefault(name, []).append(item.url)
             if item.selected:
@@ -874,7 +906,9 @@ class App(tk.Tk):
         if self.manager is None:
             return
         wanted = core.parse_ext_filter(self.v_ext.get())
-        checked = core.matching_extensions(result, wanted, self.v_html.get())
+        # A csoportosítás minden találatot végigjár; a matching_extensions() még
+        # egyszer megcsinálta ugyanezt. A kész csoportokból ugyanaz jön ki.
+        checked = core.choose_labels(groups, wanted, self.v_html.get())
         labels = {url: name for name, urls in groups.items() for url in urls}
         # Minden találat bekerül a listába; a pipa dönti el, mi töltődik le.
         # A már ismert elemek kijelölését is frissítjük, hogy egy újabb
@@ -884,13 +918,13 @@ class App(tk.Tk):
         # set_selected is végigjárja a listát, az add_urls ráadásul lemezre is
         # menti az állapotot. Kiterjesztésenként hívva húszezer találatnál ez
         # tíz fölösleges mentés és húsz végigjárás (mérve: 1,3 s -> 0,75 s).
-        self.manager.add_urls(list(labels), labels=labels, selected=False)
+        self.manager.add_urls(labels, labels=labels, selected=False)   # a kulcsok a címek
         for value in (True, False):
             csoport = [url for name, urls in groups.items()
                        if (name in checked) is value for url in urls]
             if csoport:
                 self.manager.set_selected(csoport, value)
-        for item in self.manager.items.values():
+        for item in self.manager.snapshot():
             self._queue_row(item)
         self._flush_rows()
         self._rebuild_extension_panel(groups, checked)
@@ -907,7 +941,7 @@ class App(tk.Tk):
         manager = self.manager
         if manager is None:
             return
-        items = list(manager.items.values())
+        items = manager.snapshot()
 
         def work() -> None:
             intact: list[str] = []
@@ -917,36 +951,41 @@ class App(tk.Tk):
                 (intact if ok else broken).append(item.url)
 
             try:
-                manager.classify_existing(items, record)
+                manager.classify_existing(items, record, stop=self.scan_stop)
             except Exception as exc:                       # hálózati hiba stb.
-                self.events.put(("log", f"Az ellenőrzés félbeszakadt: {core._brief(exc)}"))
+                self.events.put(("log", f"Az ellenőrzés félbeszakadt: {core.brief(exc)}"))
             # A méret nem derül ki az átvizsgálásból (az csak címeket gyűjt), ezért
             # itt kérdezzük meg a kiszolgálótól, fájlonként egy HEAD kéréssel. Az
             # "Átvizsgálás megszakítása" gomb ezt a lépést is leállítja.
             if not self.scan_stop.is_set():
                 self.events.put(("log", "Fájlméretek lekérdezése…"))
+                # A megtaláltak címét gyűjtjük, hogy utána csak az ő soruk
+                # rajzolódjon újra, ne a teljes lista. A list.append a
+                # munkásszálakból is biztonságos.
+                meretek: list[str] = []
                 try:
-                    talalt = manager.fetch_sizes(items, stop=self.scan_stop)
+                    manager.fetch_sizes(items, on_each=lambda i: meretek.append(i.url),
+                                        stop=self.scan_stop)
                 except Exception as exc:
                     self.events.put(("log", "A méretek lekérdezése félbeszakadt: "
-                                            f"{core._brief(exc)}"))
-                    talalt = 0
-                self.events.put(("sizes", talalt))
+                                            f"{core.brief(exc)}"))
+                self.events.put(("sizes", meretek))
             self.events.put(("verified", (intact, broken)))
 
         threading.Thread(target=work, daemon=True, name="verify").start()
 
-    def _on_sizes(self, talalt: int) -> None:
-        """A lekérdezett méretek megjelenítése a listában."""
+    def _on_sizes(self, megtalalt: list[str]) -> None:
+        """A lekérdezett méretek megjelenítése - csak az érintett sorokban."""
         manager = self.manager
         if manager is None:
             return
-        for item in manager.items.values():
-            if item.total:
+        for url in megtalalt:
+            item = manager.items.get(url)
+            if item is not None:
                 self._queue_row(item)
         self._flush_rows()
         self._update_count()
-        self._write_log(f"Méret {talalt} fájlnál derült ki; a kijelöltek együtt "
+        self._write_log(f"Méret {len(megtalalt)} fájlnál derült ki; a kijelöltek együtt "
                         f"{core.human(manager.totals.bytes_total)}.")
 
     def _on_verified(self, payload: tuple[list[str], list[str]]) -> None:
@@ -963,10 +1002,7 @@ class App(tk.Tk):
         for url in broken:
             item = manager.items.get(url)
             if item is not None and core.item_label(item) in wanted:
-                item.selected = True        # sérült: újra kell tölteni
-                item.status = core.Status.PENDING
-                item.done = 0
-        manager._recount()                  # az összesítő a pipákhoz igazodik
+                manager.mark_broken(item)   # sérült: újra kell tölteni
         for url in (*intact, *broken):      # csak az érintett sorok rajzolódnak újra
             item = manager.items.get(url)
             if item is not None:

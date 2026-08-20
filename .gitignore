@@ -10,4 +10,5 @@ dist/
 
 # A program futás közben keletkező fájljai
 _letoltes_allapot.json
+_letoltes_allapot.tmp
 *.part
