@@ -117,14 +117,20 @@ check("ismeretlen bot, nincs * csoport",
 
 
 class FakeResponse:
+    """A httpx.Response helyettesitese. A num_bytes_downloaded is kell:
+    a program ebbol tudja, hany NYERS BAJTOT olvasott mar be."""
+
     def __init__(self, status_code, text):
         self.status_code = status_code
         self.text = text
         self.headers = {}
+        self.num_bytes_downloaded = 0
 
     def iter_text(self, size=8192):
         for i in range(0, len(self.text), size):
-            yield self.text[i:i + size]
+            darab = self.text[i:i + size]
+            self.num_bytes_downloaded += len(darab.encode())
+            yield darab
 
     def __enter__(self):
         return self
