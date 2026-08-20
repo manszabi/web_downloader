@@ -377,5 +377,8 @@ tényleg „minden darab után" jelentést kap, az 5 másodperces alapérték pe
 Durva órát szimulálva (a `monotonic` 15,6 ms-ra kerekítve) a javítás előtt 0, utána 7 `fsync`
 futott le ugyanarra a fájlra.
 
+A teljes mátrix zöld: `ruff` + szigorú `mypy`, valamint a tesztcsomag Linuxon és
+Windowson, Python 3.11 és 3.13 alatt.
+
 A csomag mostantól **510 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 43 pontja),
 `ruff` és szigorú `mypy` továbbra is tisztán fut.

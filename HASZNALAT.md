@@ -121,12 +121,15 @@ amikor szükség van rá. Így a parancssori mód olyan gépen is elfut, ahol ni
 Külön-külön is indíthatók:
 
 ```
-python test_letolto.py      python test_valogatas.py    python test_meglevo.py
-python test_epseg.py        python test_szalak.py       python test_gui.py
-python test_terheles.py     python test_osszeomlas.py   python test_windows.py
-python test_gui_valogatas.py  python test_gui_szinkron.py  python test_robots.py
-python test_naplo.py        python test_gui_robots.py
-python test_hatekonysag.py  python test_gui_todo.py
+python tests/test_letolto.py        python tests/test_valogatas.py
+python tests/test_epseg.py          python tests/test_meglevo.py
+python tests/test_szalak.py         python tests/test_gui.py
+python tests/test_terheles.py       python tests/test_osszeomlas.py
+python tests/test_windows.py        python tests/test_gui_valogatas.py
+python tests/test_gui_szinkron.py   python tests/test_robots.py
+python tests/test_naplo.py          python tests/test_gui_robots.py
+python tests/test_hatekonysag.py    python tests/test_gui_todo.py
+python tests/test_konyveles.py
 ```
 
 A GUI-tesztek valódi ablakot nyitnak. A `testsrv.py` a tesztekhez tartozó helyi

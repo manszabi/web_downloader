@@ -1768,6 +1768,7 @@ class DownloadManager:
             totals.done_files += sign
 
     def _set_total(self, item: Item, total: int) -> None:
+        """A fájl teljes mérete (0 = még nem tudjuk, ilyenkor nem írjuk felül)."""
         if total and total != item.total:
             with self._totals_lock:
                 if item.selected:
@@ -1795,6 +1796,7 @@ class DownloadManager:
             self._book(item, 1 if value else -1)
 
     def _set_selected(self, item: Item, value: bool) -> None:
+        """Egyetlen elem pipája. Több elemhez a set_selected() a hatékonyabb."""
         with self._totals_lock:
             self._select(item, value)
 
