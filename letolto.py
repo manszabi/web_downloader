@@ -1164,6 +1164,7 @@ class DownloadManager:
         self._pool: list[threading.Thread] = []
         self._active = 0                  # épp élő munkásszálak száma
         self._used_paths: set[str] = set()
+        self._made_dirs: set[Path] = set()   # amit már létrehoztunk (lásd _ensure_dir)
         self._speed = 0.0                 # bájt/mp, exponenciálisan simítva
         self._speed_mark = (time.monotonic(), 0)
         note(f"Célkönyvtár: {self.outdir} ({self.threads} szál, "
@@ -1189,8 +1190,11 @@ class DownloadManager:
     def load_state(self) -> None:
         """Korábbi állapot betöltése; a lemez tartalma a mérvadó."""
         self.items = self.store.load()
-        self._used_paths = {i.path.casefold() for i in self.items.values()}
+        # Egyetlen végigjárás: a névütközés-nyilvántartás és a lemez állapota is
+        # itt készül el. Húszezer elemnél a két külön ciklus fölösleges kör volt.
+        used: set[str] = set()
         for item in self.items.values():
+            used.add(item.path.casefold())
             dest = self.outdir / item.path
             size = disk_size(dest)
             if size is not None:
@@ -1211,6 +1215,7 @@ class DownloadManager:
                 item.done, item.status = part, Status.PAUSED
             else:
                 item.done, item.status = 0, Status.PENDING
+        self._used_paths = used
         self.recount()
         self.on_event("reset", list(self.items.values()))
 
@@ -1503,6 +1508,7 @@ class DownloadManager:
         with self._lock:
             self.items.clear()
             self._used_paths.clear()
+            self._made_dirs.clear()
             self._todo.clear()
         with self._totals_lock:
             self.totals = Totals()
@@ -1587,13 +1593,25 @@ class DownloadManager:
                              f"szerveren), újratöltés: {item.path}")
         return False
 
+    def _ensure_dir(self, path: Path) -> None:
+        """A célmappa létrehozása, mappánként egyszer.
+
+        A ``mkdir(exist_ok=True)`` akkor is rendszerhívás, ha a mappa rég megvan:
+        húszezer fájlnál húszezerszer kérdezzük meg ugyanazt, holott a mappák
+        száma ennek töredéke. A halmaz kezelése szálbiztos (egyetlen ``add``,
+        egyetlen ``in``), a legrosszabb eset egy fölösleges ``mkdir``.
+        """
+        if path not in self._made_dirs:
+            path.mkdir(parents=True, exist_ok=True)
+            self._made_dirs.add(path)
+
     def _download(self, item: Item) -> None:
         dest = self.outdir / item.path
         part = dest.with_name(dest.name + ".part")
         note(f"Letöltés: {item.url} -> {dest}")
         try:
             self._gate()
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_dir(dest.parent)
             meglevo = disk_size(dest)
             if meglevo is not None:
                 if self._accept_existing(item, meglevo):
@@ -1882,7 +1900,7 @@ def run_cli(args: argparse.Namespace) -> int:
         manager.close()
         client.close()
     print()
-    errors = [i for i in manager.items.values() if i.status == Status.ERROR]
+    errors = [i for i in manager.snapshot() if i.status == Status.ERROR]
     for item in errors:
         log.error("HIBA %s - %s", item.path, item.error)
     return 1 if errors else 0

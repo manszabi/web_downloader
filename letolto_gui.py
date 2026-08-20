@@ -118,7 +118,9 @@ class App(tk.Tk):
         self.v_robots.trace_add("write", self._on_robots_changed)
         self._on_robots_changed()
         self._pump_job = self.after(core.UI_TICK_MS, self._pump)
-        self.after(200, self._autoload_state)     # összeomlás utáni folytatás felkínálása
+        # Az időzítőt megjegyezzük: ha a felhasználó azonnal bezárja az ablakot,
+        # a bezárás vissza tudja vonni, mielőtt egy megszűnt ablakon futna le.
+        self._autoload_job = self.after(200, self._autoload_state)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- beállítások megjegyzése -------------------------------------
@@ -152,6 +154,11 @@ class App(tk.Tk):
             if name in saved:
                 with suppress(tk.TclError, ValueError):
                     var.set(saved[name])
+        # A "Meglévő fájl" listának csak a három ismert értéke van értelme; kézzel
+        # szerkesztett vagy régebbi fájlból bármi jöhetne, és a mag némán a
+        # legóvatosabb ágra esne vissza.
+        if self.v_existing.get() not in {str(e) for e in core.Existing}:
+            self.v_existing.set(str(ALAPERTEK["existing"]))
 
     def _save_settings(self) -> None:
         # A tkinter alaposztályának get()-je a típusleírásokban jelöletlen, ezért

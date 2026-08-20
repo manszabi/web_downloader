@@ -144,7 +144,7 @@ python tests/test_konyveles.py
 Minden feltöltésnél GitHub Actions is lefuttatja őket, **Linuxon és Windowson**, Python 3.11
 és 3.13 alatt, a `ruff` és a szigorú `mypy` mellé (`.github/workflows/ellenorzes.yml`).
 
-Jelenlegi állás: **508 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
+Jelenlegi állás: **510 teszt, mind sikeres** – Linuxon és Windowson egyaránt (a Windows-ág
 első futásai három valódi, Linuxot feltételező tesztbeli hibát hoztak felszínre, lásd a
 jegyzőkönyv 10. pontját). A GUI-tesztek valódi ablakot nyitnak.
 A `tests/TESZTJEGYZOKONYV.md` tartalmazza a mérési eredményeket és az ismert korlátokat.

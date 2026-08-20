@@ -344,6 +344,10 @@ eredményeket a `tests/test_konyveles.py` (37 ellenőrzés) rögzíti, hogy viss
 | 49 | A méret-korlátokat karakterben mértük, a konstans bájtban volt (`MAX_HTML_BYTES`, `ROBOTS_MAX_TEXT`) | Többbájtos kódolású oldalnál a valódi korlát a megadott többszöröse lett volna | javítás: `resp.num_bytes_downloaded`, ami a nyers bájtokat számolja |
 | 50 | A `robots.txt` döntése minden címnél végignézte az összes szabályt | A leghosszabb minta nyer, tehát a szabályok **egyszeri** rendezésével az első találat már a válasz | a rendezés helyessége 2400 véletlen döntésen egyezik a régi, végigjáró megoldással (`test_konyveles.py` 10. pont) |
 | 51 | A találatok csoportosítása (`by_extension()`) minden átvizsgálás végén kétszer futott le | A `matching_extensions()` újra végigjárta az összes címet, pedig a kész csoportok ott voltak | kódelemzés; a felület és a parancssor is a kész csoportokat adja tovább |
+| 53 | Minden fájl letöltése előtt lefutott egy `mkdir(parents=True, exist_ok=True)` | Az is rendszerhívás, ha a mappa rég megvan: húszezer fájlnál húszezerszer kérdezzük ugyanazt, holott a mappák száma ennek töredéke – ráadásul 32 szál ugyanarra a mappára | mérés: 2000 fájl 20 mappában, **2002 -> 22** `mkdir`, 24,1 ms -> 10,0 ms. Javítás: `_ensure_dir()` mappánként egyszer |
+| 54 | A `load_state()` kétszer járta végig a listát (névütközés-nyilvántartás, majd a lemez állapota) | Fölösleges kör húszezer elemen | egyetlen ciklus lett belőle |
+| 55 | A felület indulásakor ütemezett automatikus betöltés időzítője nem volt megjegyezve | Az ablak azonnali bezárásánál megszűnt ablakon futott volna le (`TclError`) | kódelemzés; az időzítő bekerült a bezáráskor visszavontak közé |
+| 56 | A „Meglévő fájl" beállítás visszatöltése nem ellenőrizte az értéket | Kézzel szerkesztett beállításfájlból tetszőleges szöveg került a mezőbe, és a mag némán a legóvatosabb ágra esett vissza | kódelemzés; ismeretlen érték helyett a gyári alapérték |
 | 52 | A bejárás sora nem szűrte a duplikátumokat: a `visited` csak a **megnyitott** címeket ismerte, a sorba tettét nem | Egy valódi oldalon a menü és a lábléc minden lapon szerepel, tehát ugyanaz a néhány száz cím jön vissza laponként. Mindegyik bekerült a sorba (memória), és mindegyikre lefutott a `robots.txt`-illesztés is – a lapok számával **szorzódva** | mérés: 300 lap, laponként 400 közös hivatkozás -> **40,3 s / 121 800 robots-döntés / 12,0 MB** helyett **15,7 s / 2 200 döntés / 2,2 MB**, ugyanazzal az eredménnyel (300 lap, 1500 fájl). Javítás: `queued` halmaz, és az ismert címet a robots.txt-től sem kérdezzük újra |
 
 Apróságok ugyanebben a körben: az `add_urls()` a címkeszótárat elemenként építette újra
@@ -360,6 +364,7 @@ Mérési összefoglaló (20 000 elem, ugyanaz a gép):
 | 200 kijelölésváltás | 748 ms | **0,2 ms** |
 | fölösleges `fsync` fájlonként | 1 | **0** |
 | bejárás 300 lapon, közös menüvel | 40,3 s, 12,0 MB | **15,7 s, 2,2 MB** |
+| 2000 fájl célmappája | 2002 `mkdir` | **22 `mkdir`** |
 
-A csomag mostantól **508 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 41 pontja),
+A csomag mostantól **510 ellenőrzés** (a 467 mellé az új `test_konyveles.py` 43 pontja),
 `ruff` és szigorú `mypy` továbbra is tisztán fut.

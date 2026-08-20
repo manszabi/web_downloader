@@ -210,6 +210,26 @@ p.write_bytes(b"12345")
 check("meglevo fajlra a meret", disk_size(p) == 5, str(disk_size(p)))
 check("konyvtarra sem hibazik el", disk_size(OUT) is not None)
 
+mgr = DownloadManager(fresh("k7"), 2, client=client)
+mkdirek = []
+eredeti_mkdir = Path.mkdir
+
+
+def figyelt_mkdir(self, *a, **k):
+    mkdirek.append(str(self))
+    return eredeti_mkdir(self, *a, **k)
+
+
+Path.mkdir = figyelt_mkdir
+mgr._ensure_dir(mgr.outdir / "a" / "b")     # a parents=True miatt tobb hivas is lehet
+elso = len(mkdirek)
+for _ in range(49):
+    mgr._ensure_dir(mgr.outdir / "a" / "b")
+Path.mkdir = eredeti_mkdir
+check("a tovabbi negyvenkilenc hivas mar nem szol a fajlrendszerhez",
+      len(mkdirek) == elso, f"{elso} -> {len(mkdirek)}")
+check("es tenyleg letrejott", (mgr.outdir / "a" / "b").is_dir())
+
 # ------------------------------------------------------------------ 8.
 print("\n--- 8. Retry-After: egyszer varunk, nem ketszer ---")
 
